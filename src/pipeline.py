@@ -85,10 +85,11 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
     """
     timings = {}
 
-    # Check cache first (normalize punctuation for consistent keys)
+    # Check cache first (normalize punctuation + possessive 's for consistent keys)
     import re
     cache = load_demo_cache()
-    cache_key = re.sub(r"[^a-z0-9\s]", "", query.lower()).strip()
+    cache_key = re.sub(r"'s\b", "", query.lower())
+    cache_key = re.sub(r"[^a-z0-9\s]", "", cache_key).strip()
     if cache_key in cache:
         result = cache[cache_key].copy()
         result["from_cache"] = True

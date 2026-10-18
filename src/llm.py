@@ -1,12 +1,8 @@
 """Gemini Flash client for answer generation."""
 import os
-import google.generativeai as genai
+import httpx
 
-MODEL = "gemini-3.8-flash"
-
-# Configure once
-if "GEMINI_API_KEY" in os.environ:
-    genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+MODEL = "nemotron-3-nano:30b"  # Best local non-qwen model for JSON generation (tested)
 
 
 def generate_answer(disease: str, candidates: list[dict], passages: list[dict]) -> dict:
@@ -24,7 +20,6 @@ def generate_answer(disease: str, candidates: list[dict], passages: list[dict]) 
             ]
         }
     """
-    model = genai.GenerativeModel(MODEL)
 
     # Build context passages
     context_parts = []
@@ -82,22 +77,34 @@ Respond in JSON format:
   ]
 }}"""
 
-    try:
-        response = model.generate_content(prompt)
-        # Parse JSON from response
-        text = response.text.strip()
-        # Remove markdown code fences if present
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-            if text.endswith("```"):
-                text = text[:-3]
-            text = text.strip()
-            # Remove 'json' language tag
-            if text.startswith("json"):
-                text = text[4:].strip()
+    import httpx
+    resp = httpx.post(
+        "http://127.0.0.1:11434/api/generate",
+        json={
+            "model": MODEL,
+            "prompt": prompt,
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0.1},
+        },
+        timeout=120,
+    )
+    text = resp.json().get("response", "").strip() or resp.json().get("thinking", "").strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
+        if text.startswith("json"):
+            text = text[4:].strip()
 
-        import json
-        result = json.loads(text)
-        return result
-    except Exception as e:
-        return {"candidates": [], "error": str(e)}
+    import json
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # Try to extract JSON from text
+        import re
+        match = re.search(r'\{[\s\S]*\}', text)
+        if match:
+            return json.loads(match.group())
+        return {"candidates": [], "error": f"Invalid JSON response: {text[:200]}"}
