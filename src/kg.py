@@ -25,19 +25,28 @@ def load_data():
     return _drugs_df, _diseases_df, _matrix_df
 
 
-def resolve_disease(query: str) -> dict | None:
-    """Match free text to a disease by name (case-insensitive, exact then fuzzy)."""
-    _, diseases_df, _ = load_data()
-    q = query.lower().strip()
+def _normalize(text: str) -> str:
+    """Normalize disease name for matching: lowercase, remove possessive 's, remove punctuation, collapse spaces."""
+    import re
+    text = text.lower()
+    text = re.sub(r"'s\b", "", text)  # remove possessive 's
+    text = re.sub(r"[^a-z0-9\s]", "", text)  # remove remaining punctuation
+    return text.strip()
 
-    # Exact match
-    exact = diseases_df[diseases_df["name"].str.lower() == q]
+
+def resolve_disease(query: str) -> dict | None:
+    """Match free text to a disease by name (case-insensitive, punctuation-insensitive, exact then fuzzy)."""
+    _, diseases_df, _ = load_data()
+    q = _normalize(query)
+
+    # Exact match (normalized)
+    exact = diseases_df[diseases_df["name"].apply(lambda x: _normalize(str(x))) == q]
     if len(exact) > 0:
         row = exact.iloc[0]
         return {"id": row["id"], "name": row["name"], "synonyms": row.get("synonyms", "")}
 
-    # Fuzzy match (substring)
-    fuzzy = diseases_df[diseases_df["name"].str.lower().str.contains(q, na=False)]
+    # Fuzzy match (substring, normalized)
+    fuzzy = diseases_df[diseases_df["name"].apply(lambda x: q in _normalize(str(x)))]
     if len(fuzzy) > 0:
         row = fuzzy.iloc[0]
         return {"id": row["id"], "name": row["name"], "synonyms": row.get("synonyms", "")}
