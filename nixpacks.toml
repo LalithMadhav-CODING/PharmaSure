@@ -1,5 +1,0 @@
-[phases.build]
-cmds = [
-    "pip install duckdb -q",
-    "bash scripts/build_candidates.sh"
-]
