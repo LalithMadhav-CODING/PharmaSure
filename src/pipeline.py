@@ -51,6 +51,24 @@ def save_index(index: np.ndarray, passages: list[dict], index_path: str = "data/
         json.dump(passages, f)
 
 
+def save_demo_cache(cache: dict, cache_path: str = "data/demo_cache.json"):
+    """Save precomputed demo results to disk."""
+    global _demo_cache
+    _demo_cache = cache
+    import numpy as np
+
+    class NumpyEncoder(json.JSONEncoder):
+        def default(self, obj):
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            if isinstance(obj, (np.integer, np.floating)):
+                return obj.item()
+            return super().default(obj)
+
+    with open(cache_path, "w") as f:
+        json.dump(cache, f, cls=NumpyEncoder)
+
+
 def load_demo_cache(cache_path: str = "data/demo_cache.json") -> dict:
     """Load precomputed demo results."""
     global _demo_cache
