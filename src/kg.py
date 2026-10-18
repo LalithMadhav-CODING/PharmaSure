@@ -69,8 +69,9 @@ def get_candidates(disease_id: str, top_n: int = 10) -> dict:
     disease_edges = matrix_df[matrix_df["target"] == disease_id]
 
     # Known indications (is_known_positive = true)
+    # Use source (CHEBI ID) since source_ec_id is NaN for known indications
     known = disease_edges[disease_edges["is_known_positive"] == True]
-    known_ids = set(known["source_ec_id"].tolist())
+    known_ids = set(known["source"].dropna().tolist())
 
     # Repurposing candidates: NOT known positive, NOT known negative (the "unknown" ones)
     # These are drugs that may treat the disease but aren't established indications
@@ -88,6 +89,8 @@ def get_candidates(disease_id: str, top_n: int = 10) -> dict:
     candidates = []
     for _, row in candidates_df.iterrows():
         drug_id = row["source_ec_id"]
+        if pd.isna(drug_id):
+            continue
         drug_name = _get_drug_name(drugs_df, drug_id)
         candidates.append({
             "drug_id": drug_id,
@@ -103,16 +106,33 @@ def get_candidates(disease_id: str, top_n: int = 10) -> dict:
         drug_name = _get_drug_name(drugs_df, drug_id)
         # Always include, even if name lookup fails (use ID as fallback)
         known_indications.append({"drug_name": drug_name or drug_id, "drug_id": drug_id})
+    # Keep only entries with human-readable names (not identifier fallbacks)
+    known_indications = [
+        k for k in known_indications
+        if isinstance(k["drug_name"], str)
+        and not k["drug_name"].startswith(("CHEBI:", "UMLS:", "UNII:", "RXCUI:", "PUBCHEM"))
+    ]
 
     return {"candidates": candidates, "known_indications": known_indications}
 
 
 def _get_drug_name(drugs_df, drug_id: str) -> str | None:
-    """Look up drug name from drug-list by EC ID."""
+    """Look up drug name from drug-list by EC ID or CHEBI ID."""
+    import math
+    # Try EC ID first
     match = drugs_df[drugs_df["id"] == drug_id]
     if len(match) > 0:
         name = match.iloc[0]["name"]
-        if name is None or (isinstance(name, float) and name != name):  # NaN check
-            return None
-        return name
+        if isinstance(name, str):
+            return name
+        if isinstance(name, float) and not math.isnan(name):
+            return str(name)
+    # Try CHEBI ID via translator_id
+    match = drugs_df[drugs_df["translator_id"].str.contains(drug_id, na=False)]
+    if len(match) > 0:
+        name = match.iloc[0]["name"]
+        if isinstance(name, str):
+            return name
+        if isinstance(name, float) and not math.isnan(name):
+            return str(name)
     return None
