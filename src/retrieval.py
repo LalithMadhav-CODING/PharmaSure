@@ -48,7 +48,7 @@ def rerank(passages: list[dict], scores: list[float]) -> list[dict]:
 def evidence_score(passages: list[dict], drug_name: str = "") -> dict:
     """Compute evidence score from passages relevant to a specific drug.
 
-    Formula: 0.3 * relevance + 0.3 * support + 0.4 * study_quality
+    Formula: 0.25 * relevance + 0.35 * support + 0.40 * study_quality
     Labeled as experimental heuristic, never clinical probability.
     """
     if not passages:
@@ -60,13 +60,15 @@ def evidence_score(passages: list[dict], drug_name: str = "") -> dict:
     else:
         drug_passages = passages
 
-    # Relevance: mean of top-3 retrieval scores for THIS drug's passages
-    top_scores = sorted([p.get("retrieval_score", 0.0) for p in drug_passages], reverse=True)[:3]
-    raw_relevance = sum(top_scores) / len(top_scores) if top_scores else 0.0
-    relevance = max(0.0, min(1.0, (raw_relevance - 0.2) / 0.4))
+    if not drug_passages:
+        return {"score": 0.0, "tier": "Preliminary", "support": 0, "best_study_type": "none"}
 
-    # Support: fraction of this drug's passages that have disease info
-    support_count = sum(1 for p in drug_passages if p.get("disease"))
+    # Relevance: mean retrieval score for THIS drug's passages (direct, not compressed)
+    retrieval_scores = [p.get("retrieval_score", 0.0) for p in drug_passages]
+    relevance = sum(retrieval_scores) / len(retrieval_scores) if retrieval_scores else 0.0
+
+    # Support: passage count for this drug (more passages = stronger support)
+    support_count = len(drug_passages)
     support = min(support_count, 5) / 5.0
 
     # Study quality: best study type among this drug's passages
@@ -79,7 +81,7 @@ def evidence_score(passages: list[dict], drug_name: str = "") -> dict:
             best_weight = study_weights[pt]
             best_study = pt
 
-    score = 0.3 * relevance + 0.3 * support + 0.4 * best_weight
+    score = 0.25 * relevance + 0.35 * support + 0.40 * best_weight
 
     if score >= 0.7:
         tier = "Strong"
