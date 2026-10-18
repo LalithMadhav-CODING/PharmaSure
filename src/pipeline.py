@@ -182,8 +182,8 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
     for i, cand in enumerate(verified.get("candidates", [])):
         # Filter passages relevant to THIS candidate's drug
         drug_name = cand.get("drug_name", candidates[i]["drug_name"] if i < len(candidates) else "Unknown")
-        drug_passages = [p for p in top_passages if drug_name.lower() in p.get("text", "").lower()]
-        score_info = retrieval.evidence_score(drug_passages if drug_passages else top_passages)
+        drug_passages = [p for p in top_passages if drug_name.lower() in (p.get("drug") or "").lower()]
+        score_info = retrieval.evidence_score(drug_passages if drug_passages else top_passages, drug_name)
         results.append({
             "rank": i + 1,
             "drug": cand.get("drug_name", candidates[i]["drug_name"] if i < len(candidates) else "Unknown"),
