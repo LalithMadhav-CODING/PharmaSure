@@ -45,9 +45,11 @@ def resolve_disease(query: str) -> dict | None:
         row = exact.iloc[0]
         return {"id": row["id"], "name": row["name"], "synonyms": row.get("synonyms", "")}
 
-    # Fuzzy match (substring, normalized)
-    fuzzy = diseases_df[diseases_df["name"].apply(lambda x: q in _normalize(str(x)))]
+    # Fuzzy match (substring, normalized) — prefer shortest name (most common/generic disease)
+    fuzzy = diseases_df[diseases_df["name"].apply(lambda x: q in _normalize(str(x)))].copy()
     if len(fuzzy) > 0:
+        fuzzy["_norm_len"] = fuzzy["name"].apply(lambda x: len(_normalize(str(x))))
+        fuzzy = fuzzy.sort_values("_norm_len")
         row = fuzzy.iloc[0]
         return {"id": row["id"], "name": row["name"], "synonyms": row.get("synonyms", "")}
 
