@@ -12,4 +12,7 @@ pytest>=8.0.0
 google-generativeai>=0.8
 python-dotenv>=1.0
 
+# --- DuckDB (for building candidates.json) ---
+duckdb>=1.0
+
 # --- Ollama embeddings (served externally, no pip needed) ---

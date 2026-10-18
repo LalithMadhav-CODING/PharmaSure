@@ -1,28 +1,33 @@
 """Disease resolution and candidate generation from EveryCure matrix-scores."""
+import json
+import os
 import pandas as pd
-import numpy as np
 from datasets import load_dataset
 
 
 # Module-level cache for loaded datasets
 _drugs_df = None
 _diseases_df = None
-_matrix_df = None
+_candidates_lookup = None
 
 
 def load_data():
     """Load and cache EveryCure datasets."""
-    global _drugs_df, _diseases_df, _matrix_df
+    global _drugs_df, _diseases_df, _candidates_lookup
     if _drugs_df is None:
         drugs = load_dataset("everycure/drug-list", split="train")
         _drugs_df = drugs.to_pandas()
     if _diseases_df is None:
         diseases = load_dataset("everycure/disease-list", split="train")
         _diseases_df = diseases.to_pandas()
-    if _matrix_df is None:
-        matrix = load_dataset("everycure/matrix-scores", split="train")
-        _matrix_df = matrix.to_pandas()
-    return _drugs_df, _diseases_df, _matrix_df
+    if _candidates_lookup is None:
+        candidates_path = os.path.join(os.path.dirname(__file__), "..", "data", "candidates.json")
+        if os.path.exists(candidates_path):
+            with open(candidates_path) as f:
+                _candidates_lookup = json.load(f)
+        else:
+            _candidates_lookup = {}
+    return _drugs_df, _diseases_df, _candidates_lookup
 
 
 def _normalize(text: str) -> str:
@@ -57,7 +62,7 @@ def resolve_disease(query: str) -> dict | None:
 
 
 def get_candidates(disease_id: str, top_n: int = 10) -> dict:
-    """Get candidate drugs and known indications for a disease from matrix-scores.
+    """Get candidate drugs and known indications for a disease from pre-computed lookup.
 
     Returns:
         {
@@ -65,48 +70,25 @@ def get_candidates(disease_id: str, top_n: int = 10) -> dict:
             "known_indications": [{"drug_name": ...}, ...],
         }
     """
-    drugs_df, _, matrix_df = load_data()
+    drugs_df, _, lookup = load_data()
 
-    # Filter matrix-scores for this disease
-    disease_edges = matrix_df[matrix_df["target"] == disease_id]
+    entry = lookup.get(disease_id, {"c": [], "k": []})
 
-    # Known indications (is_known_positive = true)
-    # Use source (CHEBI ID) since source_ec_id is NaN for known indications
-    known = disease_edges[disease_edges["is_known_positive"] == True]
-    known_ids = set(known["source"].dropna().tolist())
-
-    # Repurposing candidates: NOT known positive, NOT known negative (the "unknown" ones)
-    # These are drugs that may treat the disease but aren't established indications
-    candidates_df = disease_edges[
-        (disease_edges["is_known_positive"] == False) &
-        (disease_edges["is_known_negative"] == False)
-    ].copy()
-
-    # Sort by predicted treat score (descending)
-    candidates_df = candidates_df.sort_values(
-        "untransformed_treat_score", ascending=False
-    ).head(top_n)
-
-    # Build candidate list
+    # Build candidate list from pre-computed top-10
     candidates = []
-    for _, row in candidates_df.iterrows():
-        drug_id = row["source_ec_id"]
-        if pd.isna(drug_id):
-            continue
-        drug_name = _get_drug_name(drugs_df, drug_id)
+    for item in entry.get("c", [])[:top_n]:
+        ec_id, score = item[0], item[1]
+        drug_name = _get_drug_name(drugs_df, ec_id)
         candidates.append({
-            "drug_id": drug_id,
+            "drug_id": ec_id,
             "drug_name": drug_name,
-            "score": float(row["untransformed_treat_score"]),
-            "trial_sig_better": bool(row["trial_sig_better"]),
-            "trial_sig_worse": bool(row["trial_sig_worse"]),
+            "score": score,
         })
 
     # Build known indications list
     known_indications = []
-    for drug_id in known_ids:
+    for drug_id in entry.get("k", []):
         drug_name = _get_drug_name(drugs_df, drug_id)
-        # Always include, even if name lookup fails (use ID as fallback)
         known_indications.append({"drug_name": drug_name or drug_id, "drug_id": drug_id})
     # Keep only entries with human-readable names (not identifier fallbacks)
     known_indications = [
