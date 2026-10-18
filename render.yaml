@@ -1,17 +1,19 @@
-# Render.com deployment configuration
-services:
-  - type: web
-    name: pharmasure
-    runtime: docker
-    plan: free
-    envVars:
-      - key: GEMINI_API_KEY
-        sync: false
-    healthCheckPath: /api/health
-    buildFilter:
-      paths:
-        - Dockerfile
-        - src/**
-        - frontend/**
-        - data/**
-        - requirements.txt
+# Render deployment — Nixpacks builder (no Docker needed)
+build:
+  builder: "nixpacks"
+  config:
+    packages:
+      - python3
+      - nodejs
+    scripts:
+      - bash scripts/build_candidates.sh
+
+deploy:
+  startCommand: "uvicorn src.app:app --host 0.0.0.0 --port $PORT"
+  healthcheckPath: "/api/health"
+  restartPolicyType: "on_failure"
+  restartPolicyMaxRetries: 3
+
+env:
+  - key: GEMINI_API_KEY
+    sync: false
