@@ -268,13 +268,8 @@ _SUPPORTED_DISEASES = [
 
 
 def _is_supported_disease(disease: dict) -> bool:
-    """Check if disease is in supported set. If set is empty, allow all."""
-    if not _SUPPORTED_DISEASES:
-        return True
-    d_name = disease.get("name", "") if isinstance(disease, dict) else str(disease)
-    import re
-    norm_d = re.sub(r"'s\b", "", d_name.lower()).strip()
-    return any(re.sub(r"'s\b", "", s.lower()).strip() == norm_d or norm_d in re.sub(r"'s\b", "", s.lower()).strip() for s in _SUPPORTED_DISEASES)
+    """All diseases supported — resolution is dynamic via EveryCure KG."""
+    return True
 
 
 def _get_supported_diseases() -> str:

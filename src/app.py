@@ -155,7 +155,8 @@ def create_app() -> FastAPI:
         return {
             "status": "ok",
             "corpus_size": 7500,
-            "supported_diseases": pipeline.get_supported_diseases_list(),
+            "disease_count": 23224,
+            "all_diseases_supported": True,
             "data_sources": [
                 "EveryCure Knowledge Graph (matrix-scores)",
                 "PubMed Literature Abstracts"
