@@ -2,7 +2,7 @@
 import os
 import httpx
 
-MODEL = "nemotron-3-nano:30b"  # Best local non-qwen model for JSON generation (tested)
+MODEL = "qwen3.8:27b"  # 17.7GB, fits in 20GB VRAM
 
 
 def generate_answer(disease: str, candidates: list[dict], passages: list[dict]) -> dict:
