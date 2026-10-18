@@ -85,9 +85,10 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
     """
     timings = {}
 
-    # Check cache first
+    # Check cache first (normalize punctuation for consistent keys)
+    import re
     cache = load_demo_cache()
-    cache_key = query.lower().strip()
+    cache_key = re.sub(r"[^a-z0-9\s]", "", query.lower()).strip()
     if cache_key in cache:
         result = cache[cache_key].copy()
         result["from_cache"] = True
