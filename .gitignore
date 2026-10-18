@@ -9,7 +9,11 @@ __pycache__/
 .pytest_cache/
 
 # Rebuildable artifacts (embedding index + passages)
-data/
+data/*
+!data/demo_cache.json
+
+# Frontend build
+frontend/node_modules/
 
 # OS / editor
 .DS_Store

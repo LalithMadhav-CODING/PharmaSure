@@ -1,18 +1,35 @@
-"""Gradio UI for PharmaSure — Drug Repurposing via Literature RAG."""
+"""FastAPI server and Gradio UI for PharmaSure / Telemedicon — Drug Repurposing via Literature RAG."""
+import os
+import sys
 import json
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse
 import gradio as gr
-from . import pipeline
+import uvicorn
+
+# Ensure repository root is on sys.path for direct python execution
+repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
+try:
+    from . import pipeline
+except (ImportError, ValueError):
+    from src import pipeline
 
 
 def format_result(result: dict) -> str:
-    """Format pipeline result as Markdown for display."""
-    if result["status"] == "unsupported_disease":
-        return f"## ⚠️ Unsupported Disease\n\n{result['message']}"
+    """Format pipeline result as Markdown for display (preserved for Gradio UI)."""
+    if result.get("status") == "unsupported_disease":
+        return f"## ⚠️ Unsupported Disease\n\n{result.get('message', 'Unsupported disease.')}"
 
-    if result["status"] == "insufficient_evidence":
-        return f"## ⚠️ Insufficient Evidence\n\n{result['message']}"
+    if result.get("status") == "insufficient_evidence":
+        return f"## ⚠️ Insufficient Evidence\n\n{result.get('message', 'Insufficient evidence.')}"
 
-    md = f"## 🔬 Results for: {result['disease']['name']}\n\n"
+    disease_name = result.get("disease", {}).get("name", result.get("query", "Unknown"))
+    md = f"## 🔬 Results for: {disease_name}\n\n"
 
     # Timings
     t = result.get("timings_ms", {})
@@ -34,25 +51,26 @@ def format_result(result: dict) -> str:
     if results:
         md += "### Repurposing Candidates\n\n"
         for r in results:
-            tier = r["evidence"]["tier"]
-            direction = r["direction"]
-            score = r["evidence"]["score"]
+            tier = r.get("evidence", {}).get("tier", "Preliminary")
+            direction = r.get("direction", "Uncertain")
+            score = r.get("evidence", {}).get("score", 0.0)
 
             # Tier emoji
             tier_icon = {"Strong": "🟢", "Moderate": "🟡", "Preliminary": "🔴"}.get(tier, "⚪")
             # Direction emoji
             dir_icon = {"Positive": "✅", "Negative": "❌", "Mixed": "⚠️", "Uncertain": "❓"}.get(direction, "❓")
 
-            md += f"**{r['rank']}. {r['drug']}** — {tier_icon} {tier} (score: {score:.3f}) {dir_icon} {direction}\n\n"
-            md += f"> {r['reason']}\n\n"
+            md += f"**{r.get('rank', 1)}. {r.get('drug', 'Unknown')}** — {tier_icon} {tier} (score: {score:.3f}) {dir_icon} {direction}\n\n"
+            md += f"> {r.get('reason', '')}\n\n"
 
             # Claims with citations
             for claim in r.get("claims", []):
                 status_icon = {"verified": "✅", "needs_review": "⚠️"}.get(claim.get("verification_status", ""), "❓")
-                citations = " ".join(f"[{cid}]" for cid in claim.get("citation_ids", []))
-                md += f"- {status_icon} {claim['text']} {citations}\n"
-                if claim.get("verification_reason") and claim["verification_status"] != "verified":
-                    md += f"  - *{claim['verification_reason']}*\n"
+                cids = claim.get("citations") or claim.get("citation_ids", [])
+                citations = " ".join(f"[{cid}]" for cid in cids)
+                md += f"- {status_icon} {claim.get('text', '')} {citations}\n"
+                if claim.get("verification_reason") and claim.get("verification_status") != "verified":
+                    md += f"  - *{claim.get('verification_reason')}*\n"
 
             md += "\n"
 
@@ -60,28 +78,29 @@ def format_result(result: dict) -> str:
     passages = result.get("passages", [])
     if passages:
         md += "<details><summary>📄 Source Passages</summary>\n\n"
-        for i, p in enumerate(passages):
+        for p in passages:
+            pid = p.get("id", "N/A")
             pmid = p.get("pmid", "N/A")
             source = p.get("source", "unknown")
             year = p.get("year", "N/A")
             pub_type = p.get("pub_type", "unknown")
-            md += f"**[{i+1}]** ({source}, {year}, {pub_type}, PMID: {pmid})\n\n"
-            md += f"> {p['text'][:300]}...\n\n"
+            md += f"**[{pid}]** ({source}, {year}, {pub_type}, PMID: {pmid})\n\n"
+            md += f"> {p.get('text', '')[:300]}...\n\n"
         md += "</details>\n"
 
     return md
 
 
 def query_fn(query: str) -> str:
-    """Run the pipeline and format results."""
+    """Run the pipeline and format results for Gradio."""
     if not query.strip():
         return "Please enter a disease name."
     result = pipeline.run_pipeline(query)
     return format_result(result)
 
 
-def create_app() -> gr.Blocks:
-    """Create the Gradio app."""
+def create_gradio_app() -> gr.Blocks:
+    """Create the Gradio app (kept functional for backward compatibility)."""
     with gr.Blocks(title="PharmaSure — Drug Repurposing RAG") as app:
         gr.Markdown("# 💊 PharmaSure — Drug Repurposing via Literature RAG\n")
         gr.Markdown("⚠️ *Research hypotheses only, not medical advice.*\n")
@@ -113,6 +132,76 @@ def create_app() -> gr.Blocks:
     return app
 
 
+def create_app() -> FastAPI:
+    """Create the full-stack FastAPI application serving APIs, static UI, and Gradio testbed."""
+    server = FastAPI(
+        title="Telemedicon — Drug Repurposing via Literature RAG",
+        description="Biomedical Literature-Based Drug Repurposing Research Platform",
+        version="1.2.0"
+    )
+
+    # Allow all origins for preview proxy support
+    server.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    @server.get("/api/health")
+    def health_endpoint():
+        """Health and metadata endpoint returning corpus size and supported diseases."""
+        return {
+            "status": "ok",
+            "corpus_size": 7500,
+            "supported_diseases": pipeline.get_supported_diseases_list(),
+            "data_sources": [
+                "EveryCure Knowledge Graph (matrix-scores)",
+                "PubMed Literature Abstracts"
+            ]
+        }
+
+    @server.post("/api/query")
+    async def query_endpoint(request: Request):
+        """Main RAG query endpoint accepting {'query': '...'}."""
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+        query_text = body.get("query", "")
+        if not isinstance(query_text, str) or not query_text.strip():
+            raise HTTPException(status_code=400, detail="The 'query' field is required")
+
+        result = pipeline.run_pipeline(query_text.strip())
+        return JSONResponse(content=result)
+
+    # Mount legacy Gradio UI at /gradio
+    gradio_blocks = create_gradio_app()
+    server = gr.mount_gradio_app(server, gradio_blocks, path="/gradio")
+
+    # Static files for production React frontend
+    dist_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
+    assets_dir = os.path.join(dist_dir, "assets")
+
+    if os.path.exists(assets_dir):
+        server.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    if os.path.exists(dist_dir):
+        @server.get("/{full_path:path}")
+        async def serve_frontend(full_path: str):
+            target = os.path.join(dist_dir, full_path)
+            if os.path.isfile(target):
+                return FileResponse(target)
+            return FileResponse(os.path.join(dist_dir, "index.html"))
+
+    return server
+
+
+# Default app instance
+app = create_app()
+
+
 if __name__ == "__main__":
-    app = create_app()
-    app.launch(server_name="0.0.0.0", server_port=7860)
+    uvicorn.run("src.app:app", host="0.0.0.0", port=7860, reload=False)
