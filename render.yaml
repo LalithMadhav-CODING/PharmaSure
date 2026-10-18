@@ -1,0 +1,17 @@
+# Render.com deployment configuration
+services:
+  - type: web
+    name: pharmasure
+    runtime: docker
+    plan: free
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+    healthCheckPath: /api/health
+    buildFilter:
+      paths:
+        - Dockerfile
+        - src/**
+        - frontend/**
+        - data/**
+        - requirements.txt

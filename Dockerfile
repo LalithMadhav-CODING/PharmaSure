@@ -25,8 +25,8 @@ COPY src/ ./src/
 COPY data/ ./data/
 COPY .env* ./
 
-# Runtime
+# Runtime — PORT is injected by Render/Railway
 ENV PORT=8080
 EXPOSE 8080
 
-CMD ["uvicorn", "src.app:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["sh", "-c", "uvicorn src.app:app --host 0.0.0.0 --port ${PORT:-8080}"]
