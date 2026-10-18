@@ -183,7 +183,8 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
         # Filter passages relevant to THIS candidate's drug
         drug_name = cand.get("drug_name", candidates[i]["drug_name"] if i < len(candidates) else "Unknown")
         drug_passages = [p for p in top_passages if drug_name.lower() in (p.get("drug") or "").lower()]
-        score_info = retrieval.evidence_score(drug_passages if drug_passages else top_passages, drug_name)
+        # If no passages for this drug, score is 0 (no evidence)
+        score_info = retrieval.evidence_score(drug_passages, drug_name) if drug_passages else {"score": 0.0, "tier": "Preliminary", "support": 0, "best_study_type": "none"}
         results.append({
             "rank": i + 1,
             "drug": cand.get("drug_name", candidates[i]["drug_name"] if i < len(candidates) else "Unknown"),
