@@ -1,4 +1,4 @@
-# 💊 Telemedicon — Drug Repurposing via Literature RAG
+# 💊 PharmaSure — Drug Repurposing via Literature RAG
 
 **Telemedicon 2026 · Internal Hackathon · AI + Digital Health**
 

@@ -1,4 +1,4 @@
-"""Gradio UI for Telemedicon — Drug Repurposing via Literature RAG."""
+"""Gradio UI for PharmaSure — Drug Repurposing via Literature RAG."""
 import json
 import gradio as gr
 from . import pipeline
@@ -82,8 +82,8 @@ def query_fn(query: str) -> str:
 
 def create_app() -> gr.Blocks:
     """Create the Gradio app."""
-    with gr.Blocks(title="Telemedicon — Drug Repurposing RAG") as app:
-        gr.Markdown("# 💊 Telemedicon — Drug Repurposing via Literature RAG\n")
+    with gr.Blocks(title="PharmaSure — Drug Repurposing RAG") as app:
+        gr.Markdown("# 💊 PharmaSure — Drug Repurposing via Literature RAG\n")
         gr.Markdown("⚠️ *Research hypotheses only, not medical advice.*\n")
 
         with gr.Row():

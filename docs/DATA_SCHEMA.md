@@ -1,4 +1,4 @@
-# Data Schema Verification — Telemedicon
+# Data Schema Verification — PharmaSure
 
 **Date:** 2026-10-18
 **Status:** Verified against actual datasets

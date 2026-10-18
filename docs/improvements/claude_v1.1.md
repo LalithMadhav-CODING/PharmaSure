@@ -1,6 +1,6 @@
 # 📋 Product Requirements Document
 
-# Telemedicon — Drug Repurposing via Literature RAG
+# PharmaSure — Drug Repurposing via Literature RAG
 
 **Telemedicon 2026 · Internal Hackathon · AI + Digital Health**
 **Version** 1.1 · **Date** 2026-10-18 · **Status** Skeleton complete, build in progress
@@ -38,14 +38,14 @@
 
 ## 1. Executive Summary
 
-**Telemedicon** is a literature-based drug repurposing assistant. A clinician or
+**PharmaSure** is a literature-based drug repurposing assistant. A clinician or
 researcher types a disease name; the system proposes **repurposing candidates**
 from a structured drug–disease knowledge graph, then gathers **literature evidence
 for each candidate** and returns a ranked list where **every claim is backed by a
 verified quote from a source passage**.
 
 **The problem it solves:** finding new uses for existing drugs currently takes
-weeks of manual literature review. Telemedicon compresses the first pass to
+weeks of manual literature review. PharmaSure compresses the first pass to
 seconds by combining structured knowledge (candidate generation), hybrid
 retrieval over biomedical text (evidence), and a citation-verified language model
 (explanation).
@@ -57,7 +57,7 @@ retrieval over biomedical text (evidence), and a citation-verified language mode
 - **Honest limits:** if the corpus lacks evidence for a disease, the system says so.
 
 **The one-sentence pitch:** *"A doctor wants to repurpose an existing drug for
-Alzheimer's. Normally this means weeks of literature review. Telemedicon does
+Alzheimer's. Normally this means weeks of literature review. PharmaSure does
 the first pass in seconds, and every claim is checkable."*
 
 ---
@@ -577,7 +577,7 @@ GET /api/health
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  💊 Telemedicon — Drug Repurposing RAG           │
+│  💊 PharmaSure — Drug Repurposing RAG           │
 │  ⚠ Research hypotheses only, not medical advice │
 ├─────────────────────────────────────────────────┤
 │                                                 │

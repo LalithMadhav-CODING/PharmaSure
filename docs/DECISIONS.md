@@ -1,4 +1,4 @@
-# 📋 Decisions & Change Log — Telemedicon
+# 📋 Decisions & Change Log — PharmaSure
 
 > Detailed record of every decision made, what was tried, and what changed.
 > Tracked in git (not gitignored) so the project can be understood or resumed later.
@@ -32,7 +32,7 @@
 
 | Change | Detail |
 |---|---|
-| Created project | `/home/additional/Projects/Telemedicon` |
+| Created project | `/home/additional/Projects/PharmaSure` |
 | Created venv | `python3.12 -m venv venv` (Python 3.12.3) |
 | Installed libraries | `numpy`, `httpx`, `gradio`, `datasets`, `pandas`, `google-generativeai` |
 | Pulled Ollama models | `nomic-embed-text` (274MB), `qwen3:4b` (2.5GB) |

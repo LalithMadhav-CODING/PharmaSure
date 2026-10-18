@@ -1,4 +1,4 @@
-# 🏗️ Stack Design — Telemedicon (Drug Repurposing via Literature RAG)
+# 🏗️ Stack Design — PharmaSure (Drug Repurposing via Literature RAG)
 
 > **Event:** Telemedicon 2026 · Internal Hackathon (AI + Digital Health)
 > **Team:** Solo · **Timeline:** 26h (10am Oct 17 → 12pm Oct 18) with 3h buffer
@@ -117,7 +117,7 @@ User types: "Alzheimer's disease"
 ## File structure
 
 ```
-Telemedicon/
+PharmaSure/
 ├── src/
 │   ├── embeddings.py      # Ollama embedding client
 │   ├── retrieval.py       # numpy cosine similarity + re-rank

@@ -1,19 +1,19 @@
-# Telemedicon — Recommended PRD Improvements
+# PharmaSure — Recommended PRD Improvements
 
-**Project:** Telemedicon — Drug Repurposing via Literature RAG  
+**Project:** PharmaSure — Drug Repurposing via Literature RAG  
 **Based on:** `PRD.md`, Version 1.0, dated 2026-10-18  
-**Purpose:** A focused improvement plan for making Telemedicon more scientifically reliable, explainable, measurable, and demo-ready without expanding the hackathon scope unnecessarily.
+**Purpose:** A focused improvement plan for making PharmaSure more scientifically reliable, explainable, measurable, and demo-ready without expanding the hackathon scope unnecessarily.
 
 ---
 
 ## 1. Executive Recommendation
 
-Evolve Telemedicon from a standard literature RAG demo into an **evidence-first drug-repurposing research assistant**.
+Evolve PharmaSure from a standard literature RAG demo into an **evidence-first drug-repurposing research assistant**.
 
 Keep the core product flow simple:
 
 1. A researcher enters a disease name or description.
-2. Telemedicon retrieves relevant literature passages and structured drug–disease associations.
+2. PharmaSure retrieves relevant literature passages and structured drug–disease associations.
 3. It normalizes entities, deduplicates evidence, and ranks candidate hypotheses.
 4. It generates concise explanations grounded in source passages.
 5. It validates citations before displaying results.
@@ -348,7 +348,7 @@ Update these existing sections rather than rewriting the entire document:
 
 ## 12. Final Recommendation
 
-The strongest differentiator for Telemedicon is not simply that it can generate a ranked list. It is that it can explain, for every candidate:
+The strongest differentiator for PharmaSure is not simply that it can generate a ranked list. It is that it can explain, for every candidate:
 
 1. **Why was this drug retrieved?** — query relevance.
 2. **What evidence supports or contradicts the hypothesis?** — traceable scientific evidence.
