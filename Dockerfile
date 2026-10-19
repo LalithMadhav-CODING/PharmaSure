@@ -25,6 +25,9 @@ COPY src/ ./src/
 COPY data/ ./data/
 COPY .env* ./
 
+# Force cache invalidation for data files
+RUN echo "cache-bust-$(date +%s)" > /tmp/cache-bust
+
 # Runtime — PORT is injected by Render/Railway
 ENV PORT=8080
 EXPOSE 8080
