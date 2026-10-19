@@ -201,7 +201,34 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
     timings["embed_ms"] = int((time.time() - t0) * 1000)
 
     t0 = time.time()
-    search_results = retrieval.search_dense(query_vec, index, top_k=30)
+    # Scope retrieval to passages tagged with this disease.
+    #
+    # A dense query on the disease name alone surfaces passages that are merely
+    # *about* the disease while naming unrelated drugs (searching "Common cold"
+    # returned Aspirin/Dexamethasone/Ketamine abstracts). No candidate drug then
+    # matches a passage, so every evidence score collapses to 0 and no citations
+    # can be produced. The corpus is built per (disease, drug) pair, so its
+    # disease tag is the reliable signal; similarity then ranks within it.
+    def _norm_key(value: str | None) -> str:
+        return " ".join((value or "").lower().split())
+
+    target_disease = _norm_key(disease["name"])
+    disease_idx = [
+        i for i, p in enumerate(passages)
+        if _norm_key(p.get("disease")) == target_disease
+    ]
+
+    if disease_idx:
+        sub_index = index[disease_idx]
+        sub_hits = retrieval.search_dense(
+            query_vec, sub_index, top_k=min(30, len(disease_idx))
+        )
+        search_results = [(disease_idx[i], s) for i, s in sub_hits]
+    else:
+        # Disease absent from the corpus: fall back to global search so the
+        # response still abstains with real passages rather than erroring.
+        search_results = retrieval.search_dense(query_vec, index, top_k=30)
+
     retrieved = []
     scores = []
     for idx, score in search_results:

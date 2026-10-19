@@ -69,23 +69,24 @@ def verify_citations(answer: dict, passages_by_id: dict) -> dict:
                     reasons.append(f"Citation [{cid}] does not mention drug '{drug_name}'")
                     continue
 
-                # Stage 2: claim support — is the quote in the passage?
+                # Stage 2: claim support — is the quote a CONTIGUOUS excerpt of
+                # the passage? A word-overlap ratio is NOT sufficient: a quote
+                # spliced with "..." (e.g. "alpha ... omega") can contain every
+                # one of its words while never appearing as written. Marking such
+                # a quote "verified" would defeat the point of this check.
                 if norm_quote in norm_passage:
                     any_verified = True
                 else:
-                    # Fuzzy check: check if key phrases from quote appear
-                    quote_words = norm_quote.split()
-                    if len(quote_words) >= 3:
-                        # Check if at least 70% of quote words appear in passage
-                        matches = sum(1 for w in quote_words if w in norm_passage)
-                        if matches / len(quote_words) >= 0.7:
-                            any_verified = True
-                        else:
-                            all_verified = False
-                            reasons.append(f"Citation [{cid}] quote not found in passage")
+                    all_verified = False
+                    if re.search(r"\.\.\.|\[\s*\.\.\.\s*\]|…", quote):
+                        reasons.append(
+                            f"Citation [{cid}] quote elides text with an ellipsis "
+                            f"and is not a contiguous excerpt"
+                        )
                     else:
-                        all_verified = False
-                        reasons.append(f"Citation [{cid}] quote not found in passage")
+                        reasons.append(
+                            f"Citation [{cid}] quote is not a verbatim excerpt of the passage"
+                        )
 
             if all_verified and any_verified:
                 status = "verified"

@@ -1,15 +1,14 @@
-import React, { useState } from 'react';
-import { Clock, Zap, ChevronDown, ChevronUp, CheckCircle, ShieldAlert, FileText, Cpu } from 'lucide-react';
+import React from 'react';
+import { Clock, Zap } from 'lucide-react';
 import { QueryResponse } from '../types';
 
 interface SearchSummaryProps {
   response: QueryResponse;
-  clientDurationMs: number | null;
+  /** Retained for call-site compatibility; end-to-end timing is no longer surfaced. */
+  clientDurationMs?: number | null;
 }
 
-export const SearchSummary: React.FC<SearchSummaryProps> = ({ response, clientDurationMs }) => {
-  const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
-
+export const SearchSummary: React.FC<SearchSummaryProps> = ({ response }) => {
   const diseaseName = response.disease?.name || response.query || 'Selected Disease';
   const diseaseId = response.disease?.id;
   const candidateCount = response.results?.length || 0;
@@ -17,7 +16,7 @@ export const SearchSummary: React.FC<SearchSummaryProps> = ({ response, clientDu
   const passageCount = response.passages?.length || 0;
 
   const timings = response.timings_ms || {};
-  const totalBackendMs = timings.total_ms ?? timings.cache_hit ?? 0;
+  const totalBackendMs = timings.total_ms ?? 0;
   const isCached = Boolean(response.from_cache);
 
   return (
@@ -51,7 +50,7 @@ export const SearchSummary: React.FC<SearchSummaryProps> = ({ response, clientDu
           )}
         </div>
 
-        {/* Quick Metrics & Latency */}
+        {/* Quick Metrics */}
         <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-xs">
           <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-center min-w-[85px]">
             <div className="text-base sm:text-lg font-bold text-navy-900">{candidateCount}</div>
@@ -77,55 +76,6 @@ export const SearchSummary: React.FC<SearchSummaryProps> = ({ response, clientDu
           </div>
         </div>
       </div>
-
-      {/* Expandable Technical Details Button */}
-      <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
-        <button
-          onClick={() => setShowTechnicalDetails(!showTechnicalDetails)}
-          className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-700 hover:text-navy-900 focus:outline-none transition-colors"
-          aria-expanded={showTechnicalDetails}
-        >
-          <Cpu className="w-3.5 h-3.5 text-slate-600" />
-          <span>{showTechnicalDetails ? 'Hide RAG Pipeline Diagnostics' : 'Inspect Pipeline Latency & Timings'}</span>
-          {showTechnicalDetails ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-        </button>
-
-        {clientDurationMs !== null && (
-          <span className="text-[11px] text-slate-600">
-            Frontend end-to-end: <strong className="font-mono text-slate-700">{clientDurationMs}ms</strong> (includes network &amp; rendering)
-          </span>
-        )}
-      </div>
-
-      {/* Technical Details Panel */}
-      {showTechnicalDetails && (
-        <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 text-xs">
-          <div className="p-2 bg-slate-50 rounded border border-slate-200">
-            <span className="text-slate-600 block text-[10px] uppercase font-semibold">1. Disease Resolve</span>
-            <span className="font-mono font-medium text-slate-800">{timings.resolve ?? 0} ms</span>
-          </div>
-          <div className="p-2 bg-slate-50 rounded border border-slate-200">
-            <span className="text-slate-600 block text-[10px] uppercase font-semibold">2. Query Embed</span>
-            <span className="font-mono font-medium text-slate-800">{timings.embed ?? 0} ms</span>
-          </div>
-          <div className="p-2 bg-slate-50 rounded border border-slate-200">
-            <span className="text-slate-600 block text-[10px] uppercase font-semibold">3. Dense Retrieval</span>
-            <span className="font-mono font-medium text-slate-800">{timings.retrieve ?? 0} ms</span>
-          </div>
-          <div className="p-2 bg-slate-50 rounded border border-slate-200">
-            <span className="text-slate-600 block text-[10px] uppercase font-semibold">4. Answer Synthesis</span>
-            <span className="font-mono font-medium text-slate-800">{timings.generate ?? 0} ms</span>
-          </div>
-          <div className="p-2 bg-slate-50 rounded border border-slate-200">
-            <span className="text-slate-600 block text-[10px] uppercase font-semibold">5. Citation Verify</span>
-            <span className="font-mono font-medium text-slate-800">{timings.verify ?? 0} ms</span>
-          </div>
-          <div className="p-2 bg-brand-50 rounded border border-brand-200">
-            <span className="text-brand-700 block text-[10px] uppercase font-semibold">Total Pipeline</span>
-            <span className="font-mono font-bold text-brand-900">{totalBackendMs} ms</span>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

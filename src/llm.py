@@ -133,10 +133,10 @@ For each candidate, provide:
 1. drug_name: the drug name
 2. reason: a 1-2 sentence explanation of WHY this drug might work for {disease_name}, grounded in the passages
 3. direction: one of "Positive" (evidence supports), "Negative" (evidence refutes), "Mixed" (both), or "Uncertain" (cannot determine). Default to "Uncertain" if unclear.
-4. claims: a list of specific factual claims, each with:
-   - text: the claim
+4. claims: AT MOST 2 claims per candidate. Each claim has:
+   - text: the claim, ONE short sentence
    - citation_ids: list of passage numbers [1], [2], etc. that support this claim
-   - quote: a VERBATIM quote from the cited passage that supports the claim (exact substring, do not paraphrase)
+   - quote: a VERBATIM, CONTIGUOUS excerpt copied exactly from the cited passage (at most 25 words). Copy the words in the order they appear — NEVER insert "..." and never skip words. A shorter exact span is always better than a longer spliced one.
 
 IMPORTANT RULES:
 - Only use the retrieved passages as evidence. Do not use your training data.
@@ -145,6 +145,9 @@ IMPORTANT RULES:
 - If a drug has no supporting passages, say "No literature evidence found" for that drug.
 - Label your confidence: if evidence is weak or ambiguous, say so.
 - This is for research hypothesis generation, NOT medical advice.
+- BE CONCISE. `reason` is at most 2 sentences, `quote` at most 25 words, and at
+  most 2 claims per candidate. Do not repeat the passage verbatim beyond the
+  quote. Cover every candidate, but keep each one brief.
 
 Respond in JSON format:
 {{
@@ -168,9 +171,24 @@ Respond in JSON format:
             "prompt": prompt,
             "stream": False,
             "format": "json",
+            # qwen3.8 advertises a 'thinking' capability: by default it emits its
+            # reasoning into a separate `thinking` field and can leave `response`
+            # empty, which broke parsing intermittently. Disabling it yields
+            # clean JSON, is faster (9.4s vs 11.3s measured), and stops reasoning
+            # tokens from consuming the output budget.
+            "think": False,
             "options": {
                 "temperature": 0.1,
-                "num_ctx": 16384,
+                # Prompt measures ~3.7k tokens; 8192 leaves ample room for the
+                # reply while keeping the KV cache small enough that all 27B
+                # weights stay on the GPU (16384 spilled ~1.9GB to CPU and cost
+                # ~30% of generation speed).
+                "num_ctx": 8192,
+                # Force every layer onto the GPU. Ollama's default heuristic
+                # leaves ~1.9GB of this 27B Q4 model on the CPU, which costs
+                # ~20% of generation speed (42 -> 52 tok/s measured).
+                # 17.3GB weights + ~2.2GB KV cache fits the 20GB card.
+                "num_gpu": 999,
                 # Room for all candidates + claims + quotes; the default cap
                 # truncates the JSON mid-object.
                 "num_predict": 4096,
