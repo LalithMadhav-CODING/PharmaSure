@@ -326,13 +326,69 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
             f"supports or refutes the use of {drug_name} for {disease['name']}."
         )
 
+        # --- Phase 2: explicit candidate-specific evidence record -------------
+        # Ties the candidate to its provenance, the evidence actually retrieved
+        # for THIS candidate, and an explicit status. Nothing here is inferred
+        # from free-form generated text.
+        distinct_pmids = sorted({
+            str(p.get("pmid")) for p in drug_passages if p.get("pmid")
+        })
+        claims = llm_cand.get("claims", []) or []
+        verified_claims = sum(1 for c in claims if c.get("verification_status") == "verified")
+        review_claims = len(claims) - verified_claims
+
+        if not drug_passages:
+            evidence_status = "no_candidate_specific_evidence"
+        elif not claims:
+            evidence_status = "evidence_retrieved_no_verified_claims"
+        elif verified_claims == 0:
+            evidence_status = "evidence_unverified"
+        else:
+            evidence_status = "supported"
+
+        limitations = []
+        if not drug_passages:
+            limitations.append(
+                "No retrieved passage is associated with this candidate, so its "
+                "evidence score is zero. This reflects corpus coverage, not "
+                "evidence of ineffectiveness."
+            )
+        if drug_passages and not distinct_pmids:
+            limitations.append("Retrieved passages carry no PMID; provenance is incomplete.")
+        if review_claims:
+            limitations.append(f"{review_claims} claim(s) did not pass verbatim verification.")
+        if len(distinct_pmids) == 1 and drug_passages:
+            limitations.append(
+                "All evidence for this candidate comes from a single PMID; it is one "
+                "study unit, not independent corroboration."
+            )
+
+        evidence_summary = {
+            "candidate_source": "everycure_knowledge_graph",
+            "graph_rank": i + 1,
+            "graph_score": kg_cand.get("score"),
+            "drug_id": kg_cand.get("drug_id"),
+            "evidence_status": evidence_status,
+            "passage_count": len(drug_passages),
+            "distinct_pmid_count": len(distinct_pmids),
+            "pmids": distinct_pmids,
+            "best_study_type": score_info.get("best_study_type"),
+            "verification": {
+                "claims": len(claims),
+                "verified": verified_claims,
+                "needs_review": review_claims,
+            },
+            "limitations": limitations,
+        }
+
         results.append({
             "rank": i + 1,
             "drug": drug_name,
             "direction": llm_cand.get("direction", "Uncertain"),
             "evidence": score_info,
             "reason": reason,
-            "claims": llm_cand.get("claims", []),
+            "claims": claims,
+            "evidence_summary": evidence_summary,
         })
 
     # Step 8: Citation-level counterfactual evidence audit (additive).
