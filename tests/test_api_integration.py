@@ -32,6 +32,17 @@ client = TestClient(app)
 ALZHEIMER = "Alzheimer disease"
 
 
+@pytest.fixture(autouse=True)
+def _disable_live_retrieval(monkeypatch):
+    """Keep this suite offline and pin the LOCAL abstention semantics.
+
+    Live retrieval is on by default in production. This file asserts the
+    local-corpus boundary, so it disables the live path; the live path is covered
+    separately in tests/test_live_retrieval.py and tests/test_live_pipeline.py.
+    """
+    monkeypatch.setenv("PHARMASURE_LIVE_RETRIEVAL", "0")
+
+
 def _norm(text: str) -> str:
     """Whitespace/quote-insensitive comparison, mirroring src/verify.py."""
     t = (text or "").lower().replace("\u2019", "'").replace("\u2018", "'")
@@ -158,9 +169,11 @@ def test_no_local_evidence_status():
     assert data["status"] == "no_local_evidence"
     assert data["results"] == []
     assert data["passages"] == []
-    # Candidate availability is still surfaced, but with no evidence claimed.
+    # Candidate availability is still surfaced, but with no evidence claimed. The
+    # reason for the absence is the top-level status; the per-candidate status
+    # only states that no evidence exists for it.
     assert data["candidate_pool"], "graph candidates should still be listed"
-    assert all(c["evidence_status"] == "no_local_evidence" for c in data["candidate_pool"])
+    assert all(c["evidence_status"] == "no_evidence" for c in data["candidate_pool"])
 
 
 def test_empty_query_validation():

@@ -12,9 +12,9 @@ except ImportError:
     pass
 
 try:
-    from . import embeddings, kg, retrieval, llm, verify, audit, coverage
+    from . import embeddings, kg, llm, retrieval, verify, audit, coverage, live_retrieval
 except (ImportError, ValueError):
-    from src import embeddings, kg, retrieval, llm, verify, audit, coverage
+    from src import embeddings, kg, llm, retrieval, verify, audit, coverage, live_retrieval
 
 
 # Module-level cache
@@ -79,6 +79,95 @@ def load_demo_cache(cache_path: str = "data/demo_cache.json") -> dict:
         with open(cache_path) as f:
             _demo_cache = json.load(f)
     return _demo_cache or {}
+
+
+def _abstention_response(disease: dict, candidates: list, known_indications: list,
+                         timings: dict, live_outcome) -> dict:
+    """Controlled abstention when no candidate-specific evidence can be produced.
+
+    Maps the live-retrieval outcome onto a distinct status so a caller can tell
+    "the provider failed" from "the provider succeeded and found nothing relevant"
+    from "live retrieval is switched off". Collapsing these would let a provider
+    outage read as a real negative result.
+    """
+    pool = [
+        {
+            "drug": c.get("drug_name"),
+            "graph_rank": i + 1,
+            "graph_score": c.get("score"),
+            "evidence_status": "no_evidence",
+        }
+        for i, c in enumerate(candidates)
+    ]
+
+    base = {
+        "disease": disease,
+        "results": [],
+        "candidate_pool": pool,
+        "known_indications": known_indications,
+        "passages": [],
+        "coverage": {
+            "local_passage_count": 0,
+            "local_literature_available": False,
+        },
+        "timings_ms": timings,
+        "from_cache": False,
+        "corpus_schema_version": coverage.CORPUS_SCHEMA_VERSION,
+    }
+
+    name = disease["name"]
+
+    if live_outcome is None:
+        return {
+            **base,
+            "status": "no_local_evidence",
+            "evidence_scope": coverage.EVIDENCE_SCOPE_NONE,
+            "live_retrieval": {"status": live_retrieval.LIVE_STATUS_DISABLED,
+                               "enabled": False},
+            "message": (
+                f"'{name}' is recognised by the knowledge graph and has "
+                f"{len(candidates)} candidate drugs, but the indexed literature corpus "
+                f"contains no abstracts for this disease and live retrieval is "
+                f"disabled, so no candidate-specific evidence can be produced. "
+                f"Absence of evidence here is not evidence of ineffectiveness."
+            ),
+        }
+
+    summary = live_outcome.summary()
+
+    if live_outcome.status == live_retrieval.LIVE_STATUS_FAILED:
+        return {
+            **base,
+            "status": "provider_unavailable",
+            "evidence_scope": coverage.EVIDENCE_SCOPE_NONE,
+            "live_retrieval": summary,
+            "message": (
+                f"'{name}' has no indexed local literature, and the live literature "
+                f"provider ({live_outcome.provider}) could not be reached, so no "
+                f"candidate-specific evidence could be produced. This is a retrieval "
+                f"failure — it is not evidence that no literature exists."
+            ),
+        }
+
+    if live_outcome.status == live_retrieval.LIVE_STATUS_NO_RESULTS:
+        detail = "the provider responded successfully and returned no records for it"
+    else:
+        detail = (
+            f"the provider returned {live_outcome.records_after_dedup} record(s), but "
+            f"none of them name any of the {len(candidates)} graph candidates, so none "
+            f"qualify as candidate-specific evidence"
+        )
+
+    return {
+        **base,
+        "status": "no_relevant_evidence",
+        "evidence_scope": coverage.EVIDENCE_SCOPE_NONE,
+        "live_retrieval": summary,
+        "message": (
+            f"'{name}' has no indexed local literature; {detail}. This is an "
+            f"absence of retrieved evidence, not evidence of ineffectiveness."
+        ),
+    }
 
 
 def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = None) -> dict:
@@ -205,81 +294,90 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
     # So: report coverage honestly, return no evidence-backed candidates, and
     # still surface candidate availability (which is a separate fact).
     local_passage_count = coverage.local_passage_count(disease["name"])
+    live_outcome = None
+    live_passages_by_drug: dict = {}
+
     if local_passage_count == 0:
-        return {
-            "status": "no_local_evidence",
-            "evidence_scope": coverage.EVIDENCE_SCOPE_NONE,
-            "message": (
-                f"'{disease['name']}' is recognised by the knowledge graph and has "
-                f"{len(candidates)} candidate drugs, but the indexed literature corpus "
-                f"contains no abstracts for this disease, so no candidate-specific "
-                f"evidence can be produced. Absence of evidence here is not evidence "
-                f"of ineffectiveness."
-            ),
-            "disease": disease,
-            "results": [],
-            "candidate_pool": [
-                {
-                    "drug": c.get("drug_name"),
-                    "graph_rank": i + 1,
-                    "graph_score": c.get("score"),
-                    "evidence_status": "no_local_evidence",
-                }
-                for i, c in enumerate(candidates)
-            ],
-            "known_indications": known_indications,
-            "passages": [],
-            "coverage": {
-                "local_passage_count": 0,
-                "local_literature_available": False,
-            },
-            "timings_ms": timings,
-            "from_cache": False,
-            "corpus_schema_version": coverage.CORPUS_SCHEMA_VERSION,
-        }
+        # No indexed literature for this disease. Before abstaining, try bounded
+        # live retrieval so "nothing indexed" does not silently become "nothing
+        # to say" — but never let a provider failure masquerade as a real result.
+        if live_retrieval.live_retrieval_enabled():
+            live_outcome = live_retrieval.retrieve_for_disease(
+                disease["name"],
+                [c["drug_name"] for c in candidates],
+                synonyms=list(disease.get("synonyms") or []),
+            )
+            if live_outcome.status == live_retrieval.LIVE_STATUS_OK:
+                live_passages_by_drug = live_outcome.passages_by_drug
+            else:
+                return _abstention_response(
+                    disease, candidates, known_indications, timings, live_outcome
+                )
+        else:
+            return _abstention_response(
+                disease, candidates, known_indications, timings, None
+            )
 
-    # Step 3: Embed query and retrieve
-    t0 = time.time()
-    query_vec = embeddings.embed_query(query)
-    timings["embed_ms"] = int((time.time() - t0) * 1000)
-
-    t0 = time.time()
-    # Retrieval is scoped to passages tagged with this disease.
+    # Step 3: Select the evidence source.
     #
-    # A dense query on the disease name alone surfaces passages that are merely
-    # *about* the disease while naming unrelated drugs (searching "Common cold"
-    # returned Aspirin/Dexamethasone/Ketamine abstracts). No candidate drug then
-    # matches a passage, so every evidence score collapses to 0 and no citations
-    # can be produced. The corpus is built per (disease, drug) pair, so its
-    # disease tag is the reliable signal; similarity then ranks within it.
-    target_disease = coverage.normalize_disease_key(disease["name"])
-    disease_idx = [
-        i for i, p in enumerate(passages)
-        if coverage.normalize_disease_key(p.get("disease")) == target_disease
-    ]
+    # Local corpus evidence takes precedence when it exists. Live retrieval is
+    # used only when the corpus holds nothing for this disease; its passages are
+    # already bound to specific candidates by the relevance check, so they are
+    # never presented as disease-specific evidence for a drug they do not name.
+    if live_passages_by_drug:
+        evidence_scope = coverage.EVIDENCE_SCOPE_LIVE
+        retrieved = [p.copy() for ps in live_passages_by_drug.values() for p in ps]
+        retrieved.sort(key=lambda p: (-float(p.get("combined_score") or 0.0),
+                                      str(p.get("pmid") or "")))
+        top_passages = retrieved[:10]
+        timings["embed_ms"] = 0
+        timings["retrieve_ms"] = 0
+        timings["rerank_ms"] = 0
+    else:
+        evidence_scope = coverage.EVIDENCE_SCOPE_LOCAL
 
-    # disease_idx cannot be empty here: a disease with no local literature
-    # returned above. Global-corpus retrieval is deliberately NOT a fallback,
-    # because those passages are not evidence for this disease.
-    sub_index = index[disease_idx]
-    sub_hits = retrieval.search_dense(
-        query_vec, sub_index, top_k=min(30, len(disease_idx))
-    )
-    search_results = [(disease_idx[i], s) for i, s in sub_hits]
+        t0 = time.time()
+        query_vec = embeddings.embed_query(query)
+        timings["embed_ms"] = int((time.time() - t0) * 1000)
 
-    retrieved = []
-    scores = []
-    for idx, score in search_results:
-        p = passages[idx].copy()
-        retrieved.append(p)
-        scores.append(score)
-    timings["retrieve_ms"] = int((time.time() - t0) * 1000)
+        t0 = time.time()
+        # Retrieval is scoped to passages tagged with this disease.
+        #
+        # A dense query on the disease name alone surfaces passages that are merely
+        # *about* the disease while naming unrelated drugs (searching "Common cold"
+        # returned Aspirin/Dexamethasone/Ketamine abstracts). No candidate drug then
+        # matches a passage, so every evidence score collapses to 0 and no citations
+        # can be produced. The corpus is built per (disease, drug) pair, so its
+        # disease tag is the reliable signal; similarity then ranks within it.
+        target_disease = coverage.normalize_disease_key(disease["name"])
+        disease_idx = [
+            i for i, p in enumerate(passages)
+            if coverage.normalize_disease_key(p.get("disease")) == target_disease
+        ]
 
-    # Step 4: Re-rank and score
-    t0 = time.time()
-    reranked = retrieval.rerank(retrieved, scores)
-    top_passages = reranked[:10]
-    timings["rerank_ms"] = int((time.time() - t0) * 1000)
+        # disease_idx cannot be empty here: a disease with no local literature
+        # either returned an abstention above or is being served from live
+        # retrieval. Global-corpus retrieval is deliberately NOT a fallback,
+        # because those passages are not evidence for this disease.
+        sub_index = index[disease_idx]
+        sub_hits = retrieval.search_dense(
+            query_vec, sub_index, top_k=min(30, len(disease_idx))
+        )
+        search_results = [(disease_idx[i], s) for i, s in sub_hits]
+
+        retrieved = []
+        scores = []
+        for idx, score in search_results:
+            p = passages[idx].copy()
+            retrieved.append(p)
+            scores.append(score)
+        timings["retrieve_ms"] = int((time.time() - t0) * 1000)
+
+        # Step 4: Re-rank and score
+        t0 = time.time()
+        reranked = retrieval.rerank(retrieved, scores)
+        top_passages = reranked[:10]
+        timings["rerank_ms"] = int((time.time() - t0) * 1000)
 
     # Step 5: Generate answer (single Gemini call)
     t0 = time.time()
@@ -409,17 +507,17 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
     timings["audit_ms"] = int((time.time() - t0) * 1000)
 
     total_ms = sum(timings.values())
-    return {
+    response = {
         "status": "ok",
         "query": query,
         "disease": disease,
         "results": results,
         "known_indications": known_indications,
         "passages": top_passages,
-        "evidence_scope": coverage.EVIDENCE_SCOPE_LOCAL,
+        "evidence_scope": evidence_scope,
         "coverage": {
             "local_passage_count": local_passage_count,
-            "local_literature_available": True,
+            "local_literature_available": local_passage_count > 0,
             "retrieved_passage_count": len(top_passages),
         },
         "evidence_audit_summary": {
@@ -433,6 +531,13 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
         "from_cache": False,
         "corpus_schema_version": coverage.CORPUS_SCHEMA_VERSION,
     }
+
+    if live_outcome is not None:
+        # Provenance: which provider, which query, when, and whether it was cached.
+        # Live evidence is never presented as if it were the local corpus.
+        response["live_retrieval"] = live_outcome.summary()
+
+    return response
 
 
 # Supported diseases (finalized from verified demo corpus)

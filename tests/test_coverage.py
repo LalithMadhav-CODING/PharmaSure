@@ -24,6 +24,21 @@ DATA = os.path.join(ROOT, "data")
 KNOWN_DISEASE = "Alzheimer disease"
 
 
+@pytest.fixture(autouse=True)
+def _disable_live_retrieval(monkeypatch):
+    """Pin the LOCAL evidence boundary these tests are about.
+
+    Live retrieval is enabled by default in production. Leaving it on here would
+    (a) make this suite depend on network availability, which the plan forbids,
+    and (b) change the abstention status under test, since an uncovered disease
+    would be answered by the provider rather than abstaining locally.
+
+    The live path has its own coverage in tests/test_live_retrieval.py and
+    tests/test_live_pipeline.py.
+    """
+    monkeypatch.setenv("PHARMASURE_LIVE_RETRIEVAL", "0")
+
+
 def _first_uncovered_disease() -> str:
     """A disease the graph resolves, with candidates, but absent from the corpus."""
     passages = json.load(open(os.path.join(DATA, "passages.json")))
@@ -109,10 +124,17 @@ def test_uncovered_disease_still_reports_candidate_availability():
 
     pool = result.get("candidate_pool") or []
     assert pool, "graph candidates should still be surfaced"
-    assert all(c["evidence_status"] == "no_local_evidence" for c in pool)
+    # The per-candidate status states the candidate has no evidence. The *reason*
+    # for that absence lives in the top-level status, because with live retrieval
+    # the reason can be a provider outage, an empty search, or absent local
+    # coverage — pinning the candidate's status to one reason would be wrong.
+    assert all(c["evidence_status"] == "no_evidence" for c in pool)
     assert all("graph_rank" in c for c in pool)
     # Graph score must be present and must not be dressed up as evidence.
     assert all("graph_score" in c for c in pool)
+    assert result["status"] in {
+        "no_local_evidence", "no_relevant_evidence", "provider_unavailable",
+    }
 
 
 def test_uncovered_disease_message_does_not_claim_ineffectiveness():

@@ -31,6 +31,7 @@ CORPUS_SCHEMA_VERSION = "2026-10-corpus-v2"
 
 #: Where a response's evidence came from.
 EVIDENCE_SCOPE_LOCAL = "local_corpus"
+EVIDENCE_SCOPE_LIVE = "live_retrieval"
 EVIDENCE_SCOPE_NONE = "none"
 EVIDENCE_SCOPE_EXPLORATORY = "exploratory_global"
 
@@ -123,7 +124,35 @@ def coverage_metadata() -> dict:
         "local_abstract_count": corpus["passage_count"],
         "local_unique_pmid_count": corpus["unique_pmids"],
         "corpus_schema_version": CORPUS_SCHEMA_VERSION,
-        # Live retrieval is not implemented yet; stated explicitly rather than
-        # implied, so the frontend can honestly hide any "live" affordance.
-        "live_retrieval_enabled": False,
+        # Phase 5: live retrieval now exists and is reported honestly from its own
+        # configuration, so the frontend can enable or hide the affordance.
+        "live_retrieval_enabled": _live_retrieval_enabled(),
+        "live_retrieval_provider": _live_provider_name(),
     }
+
+
+def _live_retrieval_enabled() -> bool:
+    """Read the live-retrieval switch without importing at module scope.
+
+    Imported lazily so coverage stays usable even if the live module or its HTTP
+    dependency is unavailable.
+    """
+    try:
+        try:
+            from . import live_retrieval
+        except (ImportError, ValueError):
+            from src import live_retrieval
+        return bool(live_retrieval.live_retrieval_enabled())
+    except Exception:
+        return False
+
+
+def _live_provider_name() -> Optional[str]:
+    try:
+        try:
+            from . import live_retrieval
+        except (ImportError, ValueError):
+            from src import live_retrieval
+        return live_retrieval.configured_provider_name()
+    except Exception:
+        return None
