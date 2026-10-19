@@ -16,6 +16,14 @@ export interface CandidateEvidence {
   tier: EvidenceTier;
   support: number;
   best_study_type: string;
+  breakdown?: {
+    relevance: number;
+    relevance_weight: number;
+    support: number;
+    support_weight: number;
+    study_quality: number;
+    study_quality_weight: number;
+  };
 }
 
 export interface Candidate {

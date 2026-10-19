@@ -95,4 +95,12 @@ def evidence_score(passages: list[dict], drug_name: str = "") -> dict:
         "tier": tier,
         "support": support_count,
         "best_study_type": best_study,
+        "breakdown": {
+            "relevance": round(relevance, 3),
+            "relevance_weight": 0.25,
+            "support": round(support, 3),
+            "support_weight": 0.35,
+            "study_quality": round(best_weight, 3),
+            "study_quality_weight": 0.40,
+        },
     }

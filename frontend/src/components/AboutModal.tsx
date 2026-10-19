@@ -39,7 +39,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({
               </span>
               <div>
                 <h3 id="about-modal-title" className="text-lg font-bold text-navy-900">
-                  About Telemedicon &amp; Biomedical Data
+                  About PharmaSure &amp; Biomedical Data
                 </h3>
                 <p className="text-xs text-slate-500">
                   Architecture, literature corpus provenance, and supported diseases
@@ -159,7 +159,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({
 
           {/* Footer */}
           <div className="bg-slate-50 px-6 py-3 border-t border-slate-200 flex items-center justify-between">
-            <span className="text-xs text-slate-400">Telemedicon 2026 · Digital Health Hackathon</span>
+            <span className="text-xs text-slate-400">PharmaSure · Telemedicon 2026 · Digital Health Hackathon</span>
             <button
               onClick={onClose}
               className="px-4 py-1.5 text-xs font-semibold text-white bg-slate-800 hover:bg-slate-900 rounded-lg transition-colors"

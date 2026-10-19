@@ -233,7 +233,7 @@ export const CitationDrawer: React.FC<CitationDrawerProps> = ({
                     <span>Citation Verification Architecture</span>
                   </div>
                   <p className="text-[11px] leading-relaxed text-slate-500">
-                    The Telemedicon verification engine validates that the cited drug and disease appear within the passage and checks claim substrings against indexed tokens before presentation.
+                    The PharmaSure verification engine validates that the cited drug and disease appear within the passage and checks claim substrings against indexed tokens before presentation.
                   </p>
                 </div>
               </>

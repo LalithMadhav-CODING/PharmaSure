@@ -238,7 +238,7 @@ export function App() {
       {/* Footer */}
       <footer className="bg-white border-t border-slate-200 py-6 mt-12 text-center text-xs text-slate-500 space-y-1">
         <p>
-          Telemedicon 2026 Hackathon · <strong>PharmaSure / Telemedicon</strong> · Biomedical Literature RAG
+          Telemedicon 2026 Hackathon · <strong>PharmaSure</strong> · Biomedical Literature RAG
         </p>
         <p className="text-slate-400 text-[11px]">
           Knowledge Graph: EveryCure matrix-scores · Dense Retrieval: nomic-embed-text · LLM: Gemini Flash · Verification: Two-Stage Substring Check

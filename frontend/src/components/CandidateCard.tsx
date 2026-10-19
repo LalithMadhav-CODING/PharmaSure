@@ -246,6 +246,26 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({ candidate, onOpenC
                   Calculated as: <strong>0.25 × Semantic Relevance + 0.35 × Passage Support + 0.40 × Study Quality</strong>.
                   Clinical trial evidence is weighted at 1.0, cohort studies at 0.7, preclinical at 0.4, and reviews at 0.3.
                 </p>
+                {candidate.evidence.breakdown && (
+                  <div className="mt-2 space-y-1">
+                    <div className="flex justify-between text-[10px]">
+                      <span>Relevance: {candidate.evidence.breakdown.relevance.toFixed(3)}</span>
+                      <span>× 0.25 = {(candidate.evidence.breakdown.relevance * 0.25).toFixed(3)}</span>
+                    </div>
+                    <div className="flex justify-between text-[10px]">
+                      <span>Support: {candidate.evidence.breakdown.support.toFixed(3)}</span>
+                      <span>× 0.35 = {(candidate.evidence.breakdown.support * 0.35).toFixed(3)}</span>
+                    </div>
+                    <div className="flex justify-between text-[10px]">
+                      <span>Study Quality: {candidate.evidence.breakdown.study_quality.toFixed(3)}</span>
+                      <span>× 0.40 = {(candidate.evidence.breakdown.study_quality * 0.40).toFixed(3)}</span>
+                    </div>
+                    <div className="flex justify-between text-[10px] font-semibold border-t border-slate-200 pt-1">
+                      <span>Total Score:</span>
+                      <span>{candidate.evidence.score.toFixed(3)}</span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">

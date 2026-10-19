@@ -224,6 +224,9 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
     # Step 6: Verify citations (two-stage)
     t0 = time.time()
     passages_by_id = {str(i+1): p for i, p in enumerate(top_passages)}
+    # Add id field to each passage so frontend can match citations
+    for i, p in enumerate(top_passages):
+        p["id"] = i + 1
     verified = verify.verify_citations(answer, passages_by_id)
     timings["verify_ms"] = int((time.time() - t0) * 1000)
 
@@ -234,7 +237,10 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
         drug_name = cand.get("drug_name", candidates[i]["drug_name"] if i < len(candidates) else "Unknown")
         drug_passages = [p for p in top_passages if drug_name.lower() in (p.get("drug") or "").lower()]
         # If no passages for this drug, score is 0 (no evidence)
-        score_info = retrieval.evidence_score(drug_passages, drug_name) if drug_passages else {"score": 0.0, "tier": "Preliminary", "support": 0, "best_study_type": "none"}
+        score_info = retrieval.evidence_score(drug_passages, drug_name) if drug_passages else {
+            "score": 0.0, "tier": "Preliminary", "support": 0, "best_study_type": "none",
+            "breakdown": {"relevance": 0.0, "relevance_weight": 0.25, "support": 0.0, "support_weight": 0.35, "study_quality": 0.0, "study_quality_weight": 0.40}
+        }
         results.append({
             "rank": i + 1,
             "drug": cand.get("drug_name", candidates[i]["drug_name"] if i < len(candidates) else "Unknown"),

@@ -55,7 +55,7 @@ def resolve_disease(query: str) -> dict | None:
     # Exact match
     if q in norm_to_id:
         did, name, synonyms = norm_to_id[q]
-        return {"id": did, "name": name, "synonyms": synonyms}
+        return {"id": did, "name": name, "synonyms": list(synonyms) if synonyms else []}
 
     # Fuzzy match — prefer shortest name (most common/generic disease)
     matches = []
@@ -65,7 +65,7 @@ def resolve_disease(query: str) -> dict | None:
     if matches:
         matches.sort()
         _, did, name, synonyms = matches[0]
-        return {"id": did, "name": name, "synonyms": synonyms}
+        return {"id": did, "name": name, "synonyms": list(synonyms) if synonyms else []}
 
     return None
 
@@ -79,7 +79,7 @@ def get_candidates(disease_id: str, top_n: int = 10) -> dict:
             "known_indications": [{"drug_name": ...}, ...],
         }
     """
-    drugs_df, _, lookup = load_data()
+    _, drugs_lookup, lookup = load_data()
 
     entry = lookup.get(disease_id, {"c": [], "k": []})
 
@@ -87,7 +87,7 @@ def get_candidates(disease_id: str, top_n: int = 10) -> dict:
     candidates = []
     for item in entry.get("c", [])[:top_n]:
         ec_id, score = item[0], item[1]
-        drug_name = _get_drug_name(drugs_df, ec_id)
+        drug_name = _get_drug_name(drugs_lookup, ec_id)
         candidates.append({
             "drug_id": ec_id,
             "drug_name": drug_name,
@@ -97,7 +97,7 @@ def get_candidates(disease_id: str, top_n: int = 10) -> dict:
     # Build known indications list
     known_indications = []
     for drug_id in entry.get("k", []):
-        drug_name = _get_drug_name(drugs_df, drug_id)
+        drug_name = _get_drug_name(drugs_lookup, drug_id)
         known_indications.append({"drug_name": drug_name or drug_id, "drug_id": drug_id})
     # Keep only entries with human-readable names (not identifier fallbacks)
     known_indications = [

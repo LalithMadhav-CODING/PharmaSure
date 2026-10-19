@@ -28,7 +28,7 @@ export const Header: React.FC<HeaderProps> = ({ health, onOpenAbout }) => {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-lg sm:text-xl font-bold tracking-tight text-navy-900">
-                  Telemedicon
+                  PharmaSure
                 </h1>
                 <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-brand-50 text-brand-800 border border-brand-200">
                   Literature RAG v1.2

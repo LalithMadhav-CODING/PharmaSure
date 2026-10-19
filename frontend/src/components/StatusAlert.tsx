@@ -98,7 +98,7 @@ export const StatusAlert: React.FC<StatusAlertProps> = ({
                 Backend Connection Error
               </h4>
               <p className="mt-1 text-sm text-rose-900 leading-relaxed">
-                {message || 'Unable to communicate with the Telemedicon backend API.'}
+                {message || 'Unable to communicate with the PharmaSure backend API.'}
               </p>
             </div>
 

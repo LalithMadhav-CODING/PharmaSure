@@ -24,9 +24,13 @@ def generate_answer(disease: str, candidates: list[dict], passages: list[dict]) 
     # Build context passages
     context_parts = []
     for i, p in enumerate(passages):
+        drug_label = p.get('drug') or 'N/A'
+        disease_label = p.get('disease') or 'N/A'
         context_parts.append(
             f"[{i+1}] (Source: {p.get('source', 'unknown')}, PMID: {p.get('pmid', 'N/A')}, "
-            f"Type: {p.get('pub_type', 'unknown')})\n{p['text']}"
+            f"Type: {p.get('pub_type', 'unknown')})\n"
+            f"Associated Drug: {drug_label} | Associated Disease: {disease_label}\n"
+            f"Text: {p['text']}"
         )
     context = "\n\n".join(context_parts)
 

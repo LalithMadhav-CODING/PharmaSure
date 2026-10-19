@@ -53,7 +53,7 @@ def verify_citations(answer: dict, passages_by_id: dict) -> dict:
             reasons = []
 
             for cid in citation_ids:
-                passage = passages_by_id.get(cid)
+                passage = passages_by_id.get(str(cid))
                 if passage is None:
                     all_verified = False
                     reasons.append(f"Citation [{cid}] not found")
