@@ -1,33 +1,33 @@
 """Disease resolution and candidate generation from EveryCure matrix-scores."""
 import json
 import os
-import pandas as pd
-from datasets import load_dataset
+import re
 
 
 # Module-level cache for loaded datasets
-_drugs_df = None
-_diseases_df = None
+_diseases_lookup = None
+_drugs_lookup = None
 _candidates_lookup = None
 
 
+def _load_json(path):
+    if os.path.exists(path):
+        with open(path) as f:
+            return json.load(f)
+    return {}
+
+
 def load_data():
-    """Load and cache EveryCure datasets."""
-    global _drugs_df, _diseases_df, _candidates_lookup
-    if _drugs_df is None:
-        drugs = load_dataset("everycure/drug-list", split="train")
-        _drugs_df = drugs.to_pandas()
-    if _diseases_df is None:
-        diseases = load_dataset("everycure/disease-list", split="train")
-        _diseases_df = diseases.to_pandas()
+    """Load and cache compact lookups (memory-efficient for 512MB RAM)."""
+    global _diseases_lookup, _drugs_lookup, _candidates_lookup
+    base = os.path.join(os.path.dirname(__file__), "..", "data")
+    if _diseases_lookup is None:
+        _diseases_lookup = _load_json(os.path.join(base, "disease_lookup.json"))
+    if _drugs_lookup is None:
+        _drugs_lookup = _load_json(os.path.join(base, "drug_lookup.json"))
     if _candidates_lookup is None:
-        candidates_path = os.path.join(os.path.dirname(__file__), "..", "data", "candidates.json")
-        if os.path.exists(candidates_path):
-            with open(candidates_path) as f:
-                _candidates_lookup = json.load(f)
-        else:
-            _candidates_lookup = {}
-    return _drugs_df, _diseases_df, _candidates_lookup
+        _candidates_lookup = _load_json(os.path.join(base, "candidates.json"))
+    return _diseases_lookup, _drugs_lookup, _candidates_lookup
 
 
 def _normalize(text: str) -> str:
@@ -41,22 +41,31 @@ def _normalize(text: str) -> str:
 
 def resolve_disease(query: str) -> dict | None:
     """Match free text to a disease by name (case-insensitive, punctuation-insensitive, exact then fuzzy)."""
-    _, diseases_df, _ = load_data()
+    diseases_lookup, _, _ = load_data()
     q = _normalize(query)
 
-    # Exact match (normalized)
-    exact = diseases_df[diseases_df["name"].apply(lambda x: _normalize(str(x))) == q]
-    if len(exact) > 0:
-        row = exact.iloc[0]
-        return {"id": row["id"], "name": row["name"], "synonyms": row.get("synonyms", "")}
+    # Build normalized name → id mapping for exact match
+    norm_to_id = {}
+    for did, info in diseases_lookup.items():
+        name = info.get("n", "")
+        norm = _normalize(name)
+        if norm and norm not in norm_to_id:
+            norm_to_id[norm] = (did, name, info.get("s", []))
 
-    # Fuzzy match (substring, normalized) — prefer shortest name (most common/generic disease)
-    fuzzy = diseases_df[diseases_df["name"].apply(lambda x: q in _normalize(str(x)))].copy()
-    if len(fuzzy) > 0:
-        fuzzy["_norm_len"] = fuzzy["name"].apply(lambda x: len(_normalize(str(x))))
-        fuzzy = fuzzy.sort_values("_norm_len")
-        row = fuzzy.iloc[0]
-        return {"id": row["id"], "name": row["name"], "synonyms": row.get("synonyms", "")}
+    # Exact match
+    if q in norm_to_id:
+        did, name, synonyms = norm_to_id[q]
+        return {"id": did, "name": name, "synonyms": synonyms}
+
+    # Fuzzy match — prefer shortest name (most common/generic disease)
+    matches = []
+    for norm, (did, name, synonyms) in norm_to_id.items():
+        if q in norm:
+            matches.append((len(norm), did, name, synonyms))
+    if matches:
+        matches.sort()
+        _, did, name, synonyms = matches[0]
+        return {"id": did, "name": name, "synonyms": synonyms}
 
     return None
 
@@ -100,23 +109,16 @@ def get_candidates(disease_id: str, top_n: int = 10) -> dict:
     return {"candidates": candidates, "known_indications": known_indications}
 
 
-def _get_drug_name(drugs_df, drug_id: str) -> str | None:
-    """Look up drug name from drug-list by EC ID or CHEBI ID."""
-    import math
-    # Try EC ID first
-    match = drugs_df[drugs_df["id"] == drug_id]
-    if len(match) > 0:
-        name = match.iloc[0]["name"]
-        if isinstance(name, str):
-            return name
-        if isinstance(name, float) and not math.isnan(name):
-            return str(name)
-    # Try CHEBI ID via translator_id
-    match = drugs_df[drugs_df["translator_id"].str.contains(drug_id, na=False)]
-    if len(match) > 0:
-        name = match.iloc[0]["name"]
-        if isinstance(name, str):
-            return name
-        if isinstance(name, float) and not math.isnan(name):
-            return str(name)
+def _get_drug_name(drugs_lookup: dict, drug_id: str) -> str | None:
+    """Look up drug name from compact drug lookup."""
+    if not drug_id:
+        return None
+    # Direct lookup
+    name = drugs_lookup.get(drug_id)
+    if name:
+        return name
+    # Try CHEBI prefix variations
+    for key in [drug_id, drug_id.replace("CHEBI:", ""), f"CHEBI:{drug_id}"]:
+        if key in drugs_lookup:
+            return drugs_lookup[key]
     return None
