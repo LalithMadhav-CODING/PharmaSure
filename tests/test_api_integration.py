@@ -131,14 +131,36 @@ def test_unsupported_disease():
     assert len(data["results"]) == 0
 
 
-def test_insufficient_evidence():
-    """A resolvable disease with no candidate drugs abstains explicitly."""
-    # Resolves in the KG, but has no candidate set.
+def test_no_candidates_status():
+    """A resolvable disease with no candidate drugs reports a distinct status.
+
+    Previously this returned the vaguer `insufficient_evidence`; Phase 1 split
+    the outcomes so "graph has no candidates" is no longer conflated with "no
+    local literature" or "evidence retrieved but insufficient".
+    """
     response = client.post("/api/query", json={"query": "Xanthomatous hypophysitis"})
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "insufficient_evidence"
+    assert data["status"] == "no_candidates"
     assert len(data["results"]) == 0
+    assert data["evidence_scope"] == "none"
+
+
+def test_no_local_evidence_status():
+    """A graph-resolvable disease absent from the corpus yields no fake evidence.
+
+    The critical Phase 1 guarantee: passages from unrelated diseases must never
+    be presented as evidence for this disease.
+    """
+    response = client.post("/api/query", json={"query": "Zygodactyly type 4"})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "no_local_evidence"
+    assert data["results"] == []
+    assert data["passages"] == []
+    # Candidate availability is still surfaced, but with no evidence claimed.
+    assert data["candidate_pool"], "graph candidates should still be listed"
+    assert all(c["evidence_status"] == "no_local_evidence" for c in data["candidate_pool"])
 
 
 def test_empty_query_validation():

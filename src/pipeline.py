@@ -12,9 +12,9 @@ except ImportError:
     pass
 
 try:
-    from . import embeddings, kg, retrieval, llm, verify, audit
+    from . import embeddings, kg, retrieval, llm, verify, audit, coverage
 except (ImportError, ValueError):
-    from src import embeddings, kg, retrieval, llm, verify, audit
+    from src import embeddings, kg, retrieval, llm, verify, audit, coverage
 
 
 # Module-level cache
@@ -88,21 +88,23 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
     """
     timings = {}
 
-    # Check cache first (normalize punctuation + possessive 's for consistent keys)
-    import re
+    # Check cache first.
+    #
+    # Identity is the disease's CANONICAL name, not a substring. The previous
+    # implementation accepted any cache key that was a substring of the query or
+    # vice versa, so a query for one disease could be answered with another
+    # disease's cached result (e.g. "diabetes" -> the "type 2 diabetes" entry).
     cache = load_demo_cache()
-    clean_q = re.sub(r"'s\b", "", query.lower())
-    cache_key = re.sub(r"[^a-z0-9\s]", "", clean_q).strip()
+    cache_key = coverage.normalize_disease_key(query)
+    normalized_cache = {coverage.normalize_disease_key(k): k for k in cache}
+    hit_key = normalized_cache.get(cache_key)
 
-    # Direct or alias lookup
-    hit_key = None
-    if cache_key in cache:
-        hit_key = cache_key
-    else:
-        for k in cache:
-            if k == cache_key or (len(k) > 3 and k in cache_key) or (len(cache_key) > 3 and cache_key in k):
-                hit_key = k
-                break
+    # A cached entry produced from a different corpus/scoring version must not be
+    # served as if it were current.
+    if hit_key:
+        cached_version = (cache[hit_key] or {}).get("corpus_schema_version")
+        if cached_version and cached_version != coverage.CORPUS_SCHEMA_VERSION:
+            hit_key = None
 
     if hit_key:
         result = cache[hit_key].copy()
@@ -128,19 +130,9 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
         })
         return result
 
-    # Check if disease is supported
-    if not _is_supported_disease({"name": query}):
-        return {
-            "status": "unsupported_disease",
-            "query": query,
-            "disease": {"id": "UNSUPPORTED", "name": query},
-            "message": f"'{query}' is not in our supported disease set. Supported diseases: {_get_supported_diseases()}",
-            "results": [],
-            "known_indications": [],
-            "passages": [],
-            "timings_ms": {"resolve": 8, "total_ms": 8},
-            "from_cache": False,
-        }
+    # NOTE: there is deliberately no "is this disease supported" gate before
+    # resolution. Support is not a static list — it is decided from the resolved
+    # canonical identity plus what the local corpus actually covers (see below).
 
     # Load index if not provided
     try:
@@ -174,18 +166,6 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
             "timings_ms": timings,
         }
 
-    # Check if disease is supported
-    supported = _is_supported_disease(disease)
-    if not supported:
-        return {
-            "status": "unsupported_disease",
-            "message": f"'{disease['name']}' is not in our supported disease set. Supported diseases: {_get_supported_diseases()}",
-            "results": [],
-            "known_indications": [],
-            "passages": [],
-            "timings_ms": timings,
-        }
-
     # Step 2: Get candidates from KG
     t0 = time.time()
     cand_result = kg.get_candidates(disease["id"], top_n=10)
@@ -193,15 +173,69 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
     known_indications = cand_result["known_indications"]
     timings["kg_ms"] = int((time.time() - t0) * 1000)
 
-    # Abstain if no candidates
+    # Resolved, but the knowledge graph proposes nothing for it. This is a
+    # distinct outcome from "not resolved" and from "no literature": the
+    # vocabulary recognises the disease, but there is no candidate to evaluate.
     if not candidates:
         return {
-            "status": "insufficient_evidence",
-            "message": f"No repurposing candidates found for {disease['name']}. This may indicate a rare condition or a gap in our knowledge graph coverage.",
+            "status": "no_candidates",
+            "evidence_scope": coverage.EVIDENCE_SCOPE_NONE,
+            "message": (
+                f"'{disease['name']}' was recognised, but the EveryCure knowledge "
+                f"graph contains no repurposing candidates for it. This is a gap in "
+                f"graph coverage, not evidence that no treatment exists."
+            ),
+            "disease": disease,
             "results": [],
+            "candidate_pool": [],
             "known_indications": known_indications,
             "passages": [],
             "timings_ms": timings,
+            "from_cache": False,
+            "corpus_schema_version": coverage.CORPUS_SCHEMA_VERSION,
+        }
+
+    # Step 2b: Evidence boundary (coverage gate).
+    #
+    # The graph can propose candidates for a disease the local corpus has never
+    # seen. In that case there is NO disease-specific evidence, and answering
+    # with passages retrieved from unrelated diseases would be fabrication —
+    # a real PMID does not make an off-topic abstract into evidence.
+    #
+    # So: report coverage honestly, return no evidence-backed candidates, and
+    # still surface candidate availability (which is a separate fact).
+    local_passage_count = coverage.local_passage_count(disease["name"])
+    if local_passage_count == 0:
+        return {
+            "status": "no_local_evidence",
+            "evidence_scope": coverage.EVIDENCE_SCOPE_NONE,
+            "message": (
+                f"'{disease['name']}' is recognised by the knowledge graph and has "
+                f"{len(candidates)} candidate drugs, but the indexed literature corpus "
+                f"contains no abstracts for this disease, so no candidate-specific "
+                f"evidence can be produced. Absence of evidence here is not evidence "
+                f"of ineffectiveness."
+            ),
+            "disease": disease,
+            "results": [],
+            "candidate_pool": [
+                {
+                    "drug": c.get("drug_name"),
+                    "graph_rank": i + 1,
+                    "graph_score": c.get("score"),
+                    "evidence_status": "no_local_evidence",
+                }
+                for i, c in enumerate(candidates)
+            ],
+            "known_indications": known_indications,
+            "passages": [],
+            "coverage": {
+                "local_passage_count": 0,
+                "local_literature_available": False,
+            },
+            "timings_ms": timings,
+            "from_cache": False,
+            "corpus_schema_version": coverage.CORPUS_SCHEMA_VERSION,
         }
 
     # Step 3: Embed query and retrieve
@@ -210,7 +244,7 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
     timings["embed_ms"] = int((time.time() - t0) * 1000)
 
     t0 = time.time()
-    # Scope retrieval to passages tagged with this disease.
+    # Retrieval is scoped to passages tagged with this disease.
     #
     # A dense query on the disease name alone surfaces passages that are merely
     # *about* the disease while naming unrelated drugs (searching "Common cold"
@@ -218,25 +252,20 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
     # matches a passage, so every evidence score collapses to 0 and no citations
     # can be produced. The corpus is built per (disease, drug) pair, so its
     # disease tag is the reliable signal; similarity then ranks within it.
-    def _norm_key(value: str | None) -> str:
-        return " ".join((value or "").lower().split())
-
-    target_disease = _norm_key(disease["name"])
+    target_disease = coverage.normalize_disease_key(disease["name"])
     disease_idx = [
         i for i, p in enumerate(passages)
-        if _norm_key(p.get("disease")) == target_disease
+        if coverage.normalize_disease_key(p.get("disease")) == target_disease
     ]
 
-    if disease_idx:
-        sub_index = index[disease_idx]
-        sub_hits = retrieval.search_dense(
-            query_vec, sub_index, top_k=min(30, len(disease_idx))
-        )
-        search_results = [(disease_idx[i], s) for i, s in sub_hits]
-    else:
-        # Disease absent from the corpus: fall back to global search so the
-        # response still abstains with real passages rather than erroring.
-        search_results = retrieval.search_dense(query_vec, index, top_k=30)
+    # disease_idx cannot be empty here: a disease with no local literature
+    # returned above. Global-corpus retrieval is deliberately NOT a fallback,
+    # because those passages are not evidence for this disease.
+    sub_index = index[disease_idx]
+    sub_hits = retrieval.search_dense(
+        query_vec, sub_index, top_k=min(30, len(disease_idx))
+    )
+    search_results = [(disease_idx[i], s) for i, s in sub_hits]
 
     retrieved = []
     scores = []
@@ -331,6 +360,12 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
         "results": results,
         "known_indications": known_indications,
         "passages": top_passages,
+        "evidence_scope": coverage.EVIDENCE_SCOPE_LOCAL,
+        "coverage": {
+            "local_passage_count": local_passage_count,
+            "local_literature_available": True,
+            "retrieved_passage_count": len(top_passages),
+        },
         "evidence_audit_summary": {
             "version": audit.AUDIT_VERSION,
             "method": audit.AUDIT_METHOD,
@@ -340,6 +375,7 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
         },
         "timings_ms": {**timings, "total_ms": total_ms},
         "from_cache": False,
+        "corpus_schema_version": coverage.CORPUS_SCHEMA_VERSION,
     }
 
 
@@ -354,8 +390,15 @@ _SUPPORTED_DISEASES = [
 
 
 def _is_supported_disease(disease: dict) -> bool:
-    """All diseases supported — resolution is dynamic via EveryCure KG."""
-    return True
+    """Deprecated gate. Retained for callers; coverage is decided in run_pipeline.
+
+    This used to return True unconditionally, which meant an always-true
+    "supported" predicate. Real support is now a function of (a) whether the
+    disease resolves to a canonical identity and (b) whether the local corpus
+    holds literature for it — see ``src/coverage.py`` and the ``no_candidates`` /
+    ``no_local_evidence`` statuses in ``run_pipeline``.
+    """
+    return coverage.has_local_literature((disease or {}).get("name"))
 
 
 def _get_supported_diseases() -> str:
