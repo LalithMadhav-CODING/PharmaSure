@@ -1,3 +1,4 @@
 {
-  "apiBase": "https://adminit.tailb9365a.ts.net"
+  "apiBase": "",
+  "proxyTarget": "https://adminit.tailb9365a.ts.net"
 }

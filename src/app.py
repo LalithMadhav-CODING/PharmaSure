@@ -2,7 +2,7 @@
 import os
 import sys
 import json
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
@@ -147,7 +147,67 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        # The Funnel hostname resolves to the Tailscale CGNAT range for any
+        # tailnet member, so a browser on the tailnet treats it as a private
+        # network request. Without this, Chrome's Private Network Access
+        # preflight is rejected and the deployed frontend cannot reach the API.
+        allow_private_network=True,
     )
+
+    # --- Optional server-side reverse proxy for /api/* -------------------------
+    # When this process serves only the UI (e.g. a small cloud container) while
+    # the model runs on the local machine, forward /api/* to the real backend.
+    # Keeping the browser same-origin sidesteps CORS and Chrome's Private
+    # Network Access rules, which block subresource requests to a host that
+    # resolves into the Tailscale CGNAT range.
+    def _proxy_target() -> str:
+        target = os.getenv("BACKEND_API_URL", "").strip().rstrip("/")
+        if target:
+            return target
+        cfg_path = os.path.join(repo_root, "frontend", "dist", "config.json")
+        try:
+            with open(cfg_path) as fh:
+                return (json.load(fh).get("proxyTarget") or "").strip().rstrip("/")
+        except Exception:
+            return ""
+
+    @server.middleware("http")
+    async def api_proxy(request: Request, call_next):
+        target = _proxy_target()
+        if target and request.url.path.startswith("/api/"):
+            from urllib.parse import urlparse
+            target_host = urlparse(target).netloc
+            # Never proxy to ourselves (the local server is reachable *as* the
+            # tunnel host); only forward when we are a different host.
+            if request.url.netloc != target_host:
+                import httpx
+                url = f"{target}{request.url.path}"
+                if request.url.query:
+                    url = f"{url}?{request.url.query}"
+                body = await request.body()
+                fwd = {
+                    k: v for k, v in request.headers.items()
+                    if k.lower() not in ("host", "content-length", "connection")
+                }
+                try:
+                    async with httpx.AsyncClient(timeout=900) as client:
+                        upstream = await client.request(
+                            request.method, url, content=body, headers=fwd
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    return JSONResponse(
+                        status_code=502,
+                        content={"detail": f"Backend unreachable: {exc}"},
+                    )
+                skip = ("content-encoding", "content-length",
+                        "transfer-encoding", "connection")
+                return Response(
+                    content=upstream.content,
+                    status_code=upstream.status_code,
+                    headers={k: v for k, v in upstream.headers.items()
+                             if k.lower() not in skip},
+                )
+        return await call_next(request)
 
     @server.get("/api/health")
     def health_endpoint():
@@ -182,31 +242,33 @@ def create_app() -> FastAPI:
     def runtime_config():
         """Runtime frontend config.
 
-        Lets the deployed UI talk to a backend running elsewhere (e.g. a local
-        machine exposed through a tunnel) without rebuilding the bundle: the
-        frontend fetches this at startup and uses `apiBase` for all API calls.
+        `apiBase`   — what the BROWSER uses for API calls. Empty means
+                      same-origin, which is the default and the only value that
+                      avoids cross-origin/Private-Network-Access problems.
+        `proxyTarget` — what THIS SERVER proxies /api/* to when it is not the
+                      machine running the model.
 
-        Resolution order:
-          1. BACKEND_API_URL env var (set on the host running this service)
-          2. the checked-in static frontend/public/config.json
-          3. "" => same-origin
+        BACKEND_API_URL, when set, overrides proxyTarget.
         """
-        env_url = os.getenv("BACKEND_API_URL", "").strip().rstrip("/")
-        if env_url:
-            return JSONResponse(content={"apiBase": env_url},
-                                headers={"Cache-Control": "no-store"})
-
+        payload = {}
         static_cfg = os.path.join(repo_root, "frontend", "dist", "config.json")
         if os.path.isfile(static_cfg):
             try:
                 with open(static_cfg) as fh:
-                    return JSONResponse(content=json.load(fh),
-                                        headers={"Cache-Control": "no-store"})
+                    loaded = json.load(fh)
+                if isinstance(loaded, dict):
+                    payload = loaded
             except Exception:
-                pass
+                payload = {}
 
-        return JSONResponse(content={"apiBase": ""},
-                            headers={"Cache-Control": "no-store"})
+        env_target = os.getenv("BACKEND_API_URL", "").strip().rstrip("/")
+        return JSONResponse(
+            content={
+                "apiBase": (payload.get("apiBase") or "").rstrip("/"),
+                "proxyTarget": env_target or (payload.get("proxyTarget") or "").rstrip("/"),
+            },
+            headers={"Cache-Control": "no-store"},
+        )
 
     # Mount legacy Gradio UI at /gradio
     gradio_blocks = create_gradio_app()
