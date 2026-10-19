@@ -108,6 +108,19 @@ export async function queryDisease(query: string): Promise<{ data: QueryResponse
           verification_status: cl.verification_status === 'verified' ? 'verified' : 'needs_review',
           verification_reason: cl.verification_reason || undefined,
         })) : [],
+        // Counterfactual audit: passed through when present. Legacy cached
+        // responses legitimately omit it, and the UI renders an explicit
+        // "unavailable" state rather than inventing one.
+        evidence_audit: (c.evidence_audit && typeof c.evidence_audit === 'object')
+          ? {
+              ...c.evidence_audit,
+              counterfactuals: Array.isArray(c.evidence_audit.counterfactuals)
+                ? c.evidence_audit.counterfactuals
+                : [],
+              sources: Array.isArray(c.evidence_audit.sources) ? c.evidence_audit.sources : [],
+              warnings: Array.isArray(c.evidence_audit.warnings) ? c.evidence_audit.warnings : [],
+            }
+          : undefined,
       })) : [],
       known_indications: Array.isArray(json.known_indications) ? json.known_indications.map((k: any) => ({
         drug_name: k.drug_name || 'Unknown',
@@ -123,6 +136,9 @@ export async function queryDisease(query: string): Promise<{ data: QueryResponse
       })) : [],
       timings_ms: json.timings_ms || { total_ms: 0 },
       from_cache: Boolean(json.from_cache),
+      evidence_audit_summary: (json.evidence_audit_summary && typeof json.evidence_audit_summary === 'object')
+        ? json.evidence_audit_summary
+        : undefined,
     };
 
     return {

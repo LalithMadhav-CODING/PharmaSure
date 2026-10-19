@@ -13,6 +13,7 @@ import {
   Info
 } from 'lucide-react';
 import { Candidate, Claim, EvidenceTier, EvidenceDirection } from '../types';
+import { EvidenceAuditPanel } from './EvidenceAudit';
 
 interface CandidateCardProps {
   candidate: Candidate;
@@ -312,6 +313,9 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({ candidate, onOpenC
           </div>
         )}
       </div>
+
+      {/* Citation-Level Counterfactual Evidence Audit (CCEA) */}
+      <EvidenceAuditPanel audit={candidate.evidence_audit} onOpenCitation={onOpenCitation} />
     </article>
   );
 };

@@ -160,6 +160,18 @@ def create_app() -> FastAPI:
     # Keeping the browser same-origin sidesteps CORS and Chrome's Private
     # Network Access rules, which block subresource requests to a host that
     # resolves into the Tailscale CGNAT range.
+    #
+    # The proxy must NOT engage when this process is itself the backend. A
+    # loopback/localhost request (including the test client) means we are being
+    # called directly, so we answer it ourselves — otherwise a local request
+    # would be forwarded out to the tunnel and back, and the test suite would
+    # silently exercise the deployed server instead of the code under test.
+    _LOCAL_HOSTNAMES = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "testserver"}
+
+    def _is_direct_local_request(request: Request) -> bool:
+        host = (request.url.hostname or "").lower()
+        return host in _LOCAL_HOSTNAMES or host.endswith(".local")
+
     def _proxy_target() -> str:
         target = os.getenv("BACKEND_API_URL", "").strip().rstrip("/")
         if target:
@@ -174,7 +186,8 @@ def create_app() -> FastAPI:
     @server.middleware("http")
     async def api_proxy(request: Request, call_next):
         target = _proxy_target()
-        if target and request.url.path.startswith("/api/"):
+        if target and request.url.path.startswith("/api/") \
+                and not _is_direct_local_request(request):
             from urllib.parse import urlparse
             target_host = urlparse(target).netloc
             # Never proxy to ourselves (the local server is reachable *as* the
@@ -212,11 +225,18 @@ def create_app() -> FastAPI:
     @server.get("/api/health")
     def health_endpoint():
         """Health and metadata endpoint returning corpus size and supported diseases."""
+        # Report the real corpus size rather than a hardcoded literal.
+        try:
+            _, passages = pipeline.load_index()
+            corpus_size = len(passages) if passages else 0
+        except Exception:
+            corpus_size = 0
         return {
             "status": "ok",
-            "corpus_size": 7500,
+            "corpus_size": corpus_size,
             "disease_count": 23224,
             "all_diseases_supported": True,
+            "supported_diseases": pipeline.get_supported_diseases_list(),
             "data_sources": [
                 "EveryCure Knowledge Graph (matrix-scores)",
                 "PubMed Literature Abstracts"

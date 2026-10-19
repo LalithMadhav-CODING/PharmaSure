@@ -12,9 +12,9 @@ except ImportError:
     pass
 
 try:
-    from . import embeddings, kg, retrieval, llm, verify
+    from . import embeddings, kg, retrieval, llm, verify, audit
 except (ImportError, ValueError):
-    from src import embeddings, kg, retrieval, llm, verify
+    from src import embeddings, kg, retrieval, llm, verify, audit
 
 
 # Module-level cache
@@ -114,9 +114,18 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
             "retrieve": cached_t.get("retrieve", cached_t.get("retrieve_ms", 26)),
             "generate": cached_t.get("generate", cached_t.get("generate_ms", 590)),
             "verify": cached_t.get("verify", cached_t.get("verify_ms", 76)),
+            "audit": cached_t.get("audit", cached_t.get("audit_ms", 0)),
             "total_ms": cached_t.get("total_ms", 742),
             "cache_hit": 0,
         }
+        # Cached entries are only served as-is when they were produced by this
+        # audit version; otherwise the caller sees an explicit "unavailable"
+        # audit rather than a stale one presented as current.
+        result.setdefault("evidence_audit_summary", {
+            "version": audit.AUDIT_VERSION,
+            "status": "unavailable_for_cached_result",
+            "note": "Cached result predates the evidence audit.",
+        })
         return result
 
     # Check if disease is supported
@@ -297,6 +306,23 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
             "claims": llm_cand.get("claims", []),
         })
 
+    # Step 8: Citation-level counterfactual evidence audit (additive).
+    # Pure deterministic recomputation over the evidence already retrieved: no LLM
+    # call and no re-embedding, so it cannot alter the baseline scores above.
+    # The audit is an additive layer — if it fails, the baseline candidate
+    # results must still be returned intact (spec §6.6.13).
+    t0 = time.time()
+    try:
+        audit_summary = audit.attach_audits(results, top_passages, disease)
+        audit_state = "computed"
+    except Exception as exc:  # noqa: BLE001
+        audit_summary = {
+            "audited": 0, "complete": 0,
+            "not_auditable": 0, "failed": len(results),
+        }
+        audit_state = f"failed:{type(exc).__name__}"
+    timings["audit_ms"] = int((time.time() - t0) * 1000)
+
     total_ms = sum(timings.values())
     return {
         "status": "ok",
@@ -305,6 +331,13 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
         "results": results,
         "known_indications": known_indications,
         "passages": top_passages,
+        "evidence_audit_summary": {
+            "version": audit.AUDIT_VERSION,
+            "method": audit.AUDIT_METHOD,
+            "scoring_function": audit.SCORING_FUNCTION_ID,
+            "status": audit_state,
+            **audit_summary,
+        },
         "timings_ms": {**timings, "total_ms": total_ms},
         "from_cache": False,
     }
