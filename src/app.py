@@ -185,12 +185,28 @@ def create_app() -> FastAPI:
         Lets the deployed UI talk to a backend running elsewhere (e.g. a local
         machine exposed through a tunnel) without rebuilding the bundle: the
         frontend fetches this at startup and uses `apiBase` for all API calls.
-        Empty string => same-origin (default for local development).
+
+        Resolution order:
+          1. BACKEND_API_URL env var (set on the host running this service)
+          2. the checked-in static frontend/public/config.json
+          3. "" => same-origin
         """
-        return JSONResponse(
-            content={"apiBase": os.getenv("BACKEND_API_URL", "").rstrip("/")},
-            headers={"Cache-Control": "no-store"},
-        )
+        env_url = os.getenv("BACKEND_API_URL", "").strip().rstrip("/")
+        if env_url:
+            return JSONResponse(content={"apiBase": env_url},
+                                headers={"Cache-Control": "no-store"})
+
+        static_cfg = os.path.join(repo_root, "frontend", "dist", "config.json")
+        if os.path.isfile(static_cfg):
+            try:
+                with open(static_cfg) as fh:
+                    return JSONResponse(content=json.load(fh),
+                                        headers={"Cache-Control": "no-store"})
+            except Exception:
+                pass
+
+        return JSONResponse(content={"apiBase": ""},
+                            headers={"Cache-Control": "no-store"})
 
     # Mount legacy Gradio UI at /gradio
     gradio_blocks = create_gradio_app()
