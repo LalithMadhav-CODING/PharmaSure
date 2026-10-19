@@ -178,6 +178,20 @@ def create_app() -> FastAPI:
         result = pipeline.run_pipeline(query_text.strip())
         return JSONResponse(content=result)
 
+    @server.get("/config.json")
+    def runtime_config():
+        """Runtime frontend config.
+
+        Lets the deployed UI talk to a backend running elsewhere (e.g. a local
+        machine exposed through a tunnel) without rebuilding the bundle: the
+        frontend fetches this at startup and uses `apiBase` for all API calls.
+        Empty string => same-origin (default for local development).
+        """
+        return JSONResponse(
+            content={"apiBase": os.getenv("BACKEND_API_URL", "").rstrip("/")},
+            headers={"Cache-Control": "no-store"},
+        )
+
     # Mount legacy Gradio UI at /gradio
     gradio_blocks = create_gradio_app()
     server = gr.mount_gradio_app(server, gradio_blocks, path="/gradio")

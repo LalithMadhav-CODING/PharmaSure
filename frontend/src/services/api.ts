@@ -1,12 +1,32 @@
 import { QueryResponse, HealthResponse } from '../types';
 
-const API_BASE = ''; // relative path for same-origin proxy
+const API_BASE_FALLBACK = ''; // relative path for same-origin proxy
+
+// API base resolution order:
+//   1. runtime /config.json  -> lets the deployed bundle target a tunneled backend
+//   2. build-time VITE_API_BASE_URL
+//   3. same-origin (local dev / single-service deploy)
+let apiBasePromise: Promise<string> | null = null;
+
+function getApiBase(): Promise<string> {
+  if (!apiBasePromise) {
+    const buildTime = (import.meta as any)?.env?.VITE_API_BASE_URL;
+    apiBasePromise = fetch('/config.json', { headers: { Accept: 'application/json' } })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((cfg) => {
+        const runtime = cfg && typeof cfg.apiBase === 'string' ? cfg.apiBase.trim() : '';
+        return (runtime || buildTime || API_BASE_FALLBACK).replace(/\/+$/, '');
+      })
+      .catch(() => (buildTime || API_BASE_FALLBACK).replace(/\/+$/, ''));
+  }
+  return apiBasePromise;
+}
 
 let activeAbortController: AbortController | null = null;
 let latestRequestId = 0;
 
 export async function fetchHealth(): Promise<HealthResponse> {
-  const response = await fetch(`${API_BASE}/api/health`, {
+  const response = await fetch(`${await getApiBase()}/api/health`, {
     headers: { 'Accept': 'application/json' },
   });
 
@@ -37,7 +57,7 @@ export async function queryDisease(query: string): Promise<{ data: QueryResponse
   const requestId = ++latestRequestId;
 
   try {
-    const response = await fetch(`${API_BASE}/api/query`, {
+    const response = await fetch(`${await getApiBase()}/api/query`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

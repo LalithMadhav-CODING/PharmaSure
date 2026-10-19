@@ -7,6 +7,10 @@ services:
     envVars:
       - key: GEMINI_API_KEY
         sync: false
+      # URL of the backend serving /api/*. Empty => same-origin (all-in-one).
+      # Set this to the tunnel URL when the backend runs on the local machine.
+      - key: BACKEND_API_URL
+        sync: false
     healthCheckPath: /api/health
     buildFilter:
       paths:
