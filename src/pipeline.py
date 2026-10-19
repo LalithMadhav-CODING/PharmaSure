@@ -231,23 +231,43 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
     timings["verify_ms"] = int((time.time() - t0) * 1000)
 
     # Step 7: Attach evidence scores to candidates
+    # The knowledge-graph candidate list is authoritative: every candidate it
+    # returned is always shown, with LLM reasons/claims attached where the model
+    # actually covered that drug. A short or failed generation can no longer
+    # shrink or empty the result list.
+    llm_by_drug = {}
+    for c in verified.get("candidates", []):
+        name = (c.get("drug_name") or "").strip().lower()
+        if name and name not in llm_by_drug:
+            llm_by_drug[name] = c
+
     results = []
-    for i, cand in enumerate(verified.get("candidates", [])):
-        # Filter passages relevant to THIS candidate's drug
-        drug_name = cand.get("drug_name", candidates[i]["drug_name"] if i < len(candidates) else "Unknown")
-        drug_passages = [p for p in top_passages if drug_name.lower() in (p.get("drug") or "").lower()]
-        # If no passages for this drug, score is 0 (no evidence)
+    for i, kg_cand in enumerate(candidates):
+        drug_name = kg_cand["drug_name"]
+        llm_cand = llm_by_drug.get(drug_name.strip().lower(), {})
+
+        # Passages whose source drug matches this candidate
+        drug_passages = [
+            p for p in top_passages
+            if drug_name.lower() in (p.get("drug") or "").lower()
+        ]
         score_info = retrieval.evidence_score(drug_passages, drug_name) if drug_passages else {
             "score": 0.0, "tier": "Preliminary", "support": 0, "best_study_type": "none",
             "breakdown": {"relevance": 0.0, "relevance_weight": 0.25, "support": 0.0, "support_weight": 0.35, "study_quality": 0.0, "study_quality_weight": 0.40}
         }
+
+        reason = llm_cand.get("reason") or (
+            f"No literature evidence found in the retrieved passages that directly "
+            f"supports or refutes the use of {drug_name} for {disease['name']}."
+        )
+
         results.append({
             "rank": i + 1,
-            "drug": cand.get("drug_name", candidates[i]["drug_name"] if i < len(candidates) else "Unknown"),
-            "direction": cand.get("direction", "Uncertain"),
+            "drug": drug_name,
+            "direction": llm_cand.get("direction", "Uncertain"),
             "evidence": score_info,
-            "reason": cand.get("reason", ""),
-            "claims": cand.get("claims", []),
+            "reason": reason,
+            "claims": llm_cand.get("claims", []),
         })
 
     total_ms = sum(timings.values())

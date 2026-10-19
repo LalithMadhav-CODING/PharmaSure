@@ -8,9 +8,16 @@ __pycache__/
 *.pyo
 .pytest_cache/
 
-# Rebuildable artifacts (embedding index + passages)
+# Data artifacts
 data/*
+# Ship the corpus + index so a fresh clone is queryable without a rebuild
 !data/demo_cache.json
+!data/pubmed_passages.json
+!data/passages.json
+!data/index.npy
+!data/candidates.json
+!data/disease_lookup.json
+!data/drug_lookup.json
 
 # Frontend build
 frontend/node_modules/

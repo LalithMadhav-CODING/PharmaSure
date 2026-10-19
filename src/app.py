@@ -220,12 +220,20 @@ def create_app() -> FastAPI:
         server.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
     if os.path.exists(dist_dir):
+        # Confine static serving to the build output. The raw request path can
+        # contain traversal sequences (e.g. "..%2f..%2f.env") which os.path.join
+        # would follow straight out of dist_dir and serve arbitrary files.
+        dist_root = os.path.realpath(dist_dir)
+
         @server.get("/{full_path:path}")
         async def serve_frontend(full_path: str):
-            target = os.path.join(dist_dir, full_path)
-            if os.path.isfile(target):
-                return FileResponse(target)
-            return FileResponse(os.path.join(dist_dir, "index.html"))
+            candidate = os.path.realpath(
+                os.path.join(dist_root, full_path.lstrip("/"))
+            )
+            if (candidate == dist_root or candidate.startswith(dist_root + os.sep)) \
+                    and os.path.isfile(candidate):
+                return FileResponse(candidate)
+            return FileResponse(os.path.join(dist_root, "index.html"))
 
     return server
 
