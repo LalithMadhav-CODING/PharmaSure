@@ -1,81 +1,58 @@
 import React from 'react';
-import { Clock, Zap } from 'lucide-react';
+import { Clock3, Database, FileText, FlaskConical } from 'lucide-react';
 import { QueryResponse } from '../types';
 
 interface SearchSummaryProps {
   response: QueryResponse;
-  /** Retained for call-site compatibility; end-to-end timing is no longer surfaced. */
-  clientDurationMs?: number | null;
 }
 
 export const SearchSummary: React.FC<SearchSummaryProps> = ({ response }) => {
-  const diseaseName = response.disease?.name || response.query || 'Selected Disease';
-  const diseaseId = response.disease?.id;
-  const candidateCount = response.results?.length || 0;
-  const knownCount = response.known_indications?.length || 0;
-  const passageCount = response.passages?.length || 0;
-
-  const timings = response.timings_ms || {};
-  const totalBackendMs = timings.total_ms ?? 0;
-  const isCached = Boolean(response.from_cache);
+  const diseaseName = response.disease?.name || response.query || 'Disease name not returned';
+  const candidateCount = Array.isArray(response.results) ? response.results.length : undefined;
+  const passageCount = Array.isArray(response.passages) ? response.passages.length : undefined;
+  const totalBackendMs = response.timings_ms?.total_ms;
+  const isCached = response.from_cache === true;
 
   return (
-    <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 shadow-2xs mb-6 transition-all">
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-        {/* Disease Entity Info */}
-        <div className="space-y-1">
+    <section className="rounded-2xl border border-slate-200 bg-white px-4 py-4 shadow-sm sm:px-5" aria-label="Query result summary">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold tracking-wide uppercase text-brand-700 bg-brand-50 px-2 py-0.5 rounded border border-brand-200">
-              Resolved Disease
+            <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${response.disease?.name ? 'border-teal-200 bg-teal-50 text-teal-800' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+              {response.disease?.name ? 'Resolved disease' : 'Disease entity not returned'}
             </span>
-            {diseaseId && (
-              <span className="text-xs font-mono text-slate-700 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                {diseaseId}
-              </span>
+            {response.disease?.id && (
+              <span className="rounded border border-slate-200 bg-slate-50 px-2 py-0.5 font-mono text-[10px] text-slate-600">{response.disease.id}</span>
             )}
             {isCached && (
-              <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                <Zap className="w-3 h-3 text-emerald-600 fill-emerald-600" />
-                Cached Precomputation
+              <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-[10px] font-medium text-slate-700">
+                <Database className="h-3 w-3" aria-hidden="true" /> Cached precomputation
               </span>
             )}
           </div>
-          <h3 className="text-xl sm:text-2xl font-bold text-navy-900 tracking-tight">
-            {diseaseName}
-          </h3>
-          {response.disease?.synonyms && (
-            <p className="text-xs text-slate-700 truncate max-w-xl">
-              Synonyms: {response.disease.synonyms}
-            </p>
-          )}
+          <h2 className="mt-2 break-words text-xl font-semibold tracking-tight text-slate-950 sm:text-2xl">{diseaseName}</h2>
+          {response.disease?.synonyms && <p className="mt-1 text-xs text-slate-500">Synonyms: {response.disease.synonyms}</p>}
         </div>
-
-        {/* Quick Metrics */}
-        <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-xs">
-          <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-center min-w-[85px]">
-            <div className="text-base sm:text-lg font-bold text-navy-900">{candidateCount}</div>
-            <div className="text-slate-700 font-medium">Candidates</div>
+        <dl className="grid grid-cols-2 gap-2 text-xs sm:min-w-[19rem] sm:grid-cols-3">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+            <dt className="flex items-center gap-1.5 text-slate-500"><FlaskConical className="h-3.5 w-3.5" aria-hidden="true" />KG candidates</dt>
+            <dd className="mt-1 font-mono text-base font-semibold text-slate-900">{candidateCount === undefined ? '—' : candidateCount}</dd>
           </div>
-
-          <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-center min-w-[85px]">
-            <div className="text-base sm:text-lg font-bold text-slate-700">{knownCount}</div>
-            <div className="text-slate-700 font-medium">Already Indicated</div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+            <dt className="flex items-center gap-1.5 text-slate-500"><FileText className="h-3.5 w-3.5" aria-hidden="true" />Returned passages</dt>
+            <dd className="mt-1 font-mono text-base font-semibold text-slate-900">{passageCount === undefined ? '—' : passageCount}</dd>
           </div>
-
-          <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-center min-w-[85px]">
-            <div className="text-base sm:text-lg font-bold text-slate-700">{passageCount}</div>
-            <div className="text-slate-700 font-medium">Source Passages</div>
-          </div>
-
-          <div className="bg-brand-50/60 border border-brand-200/60 rounded-lg px-3 py-2 text-center min-w-[100px]">
-            <div className="flex items-center justify-center gap-1 text-base sm:text-lg font-bold text-brand-900 font-mono">
-              <Clock className="w-3.5 h-3.5 text-brand-700" />
-              <span>{totalBackendMs}ms</span>
+          {totalBackendMs !== undefined && (
+            <div className="col-span-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 sm:col-span-1">
+              <dt className="flex items-center gap-1.5 text-slate-500"><Clock3 className="h-3.5 w-3.5" aria-hidden="true" />Backend time</dt>
+              <dd className="mt-1 font-mono text-base font-semibold text-slate-900">{totalBackendMs} ms</dd>
             </div>
-            <div className="text-brand-800 font-medium">Backend Time</div>
-          </div>
-        </div>
+          )}
+        </dl>
       </div>
-    </div>
+      <p className="mt-3 border-t border-slate-100 pt-3 text-[11px] leading-5 text-slate-600">
+        Knowledge-graph rank is candidate discovery; the literature evidence score is a separate heuristic. Neither represents a probability of efficacy.
+      </p>
+    </section>
   );
 };

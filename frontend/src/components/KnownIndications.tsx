@@ -10,10 +10,11 @@ interface KnownIndicationsProps {
 export const KnownIndications: React.FC<KnownIndicationsProps> = ({ indications, diseaseName }) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  // Default display preview count
+  // Keep long backend-provided lists scannable.
   const PREVIEW_COUNT = 8;
-  const hasMore = indications.length > PREVIEW_COUNT;
-  const displayed = isExpanded ? indications : indications.slice(0, PREVIEW_COUNT);
+  const validIndications = indications.filter((item) => item.drug_name?.trim());
+  const hasMore = validIndications.length > PREVIEW_COUNT;
+  const displayed = isExpanded ? validIndications : validIndications.slice(0, PREVIEW_COUNT);
 
   return (
     <section
@@ -27,16 +28,16 @@ export const KnownIndications: React.FC<KnownIndicationsProps> = ({ indications,
           </div>
           <div>
             <h4 id="known-indications-heading" className="text-base font-bold text-navy-900">
-              Already indicated for this disease
+              Known indications in the knowledge graph
             </h4>
             <p className="text-xs text-slate-500">
-              Established clinical indications excluded from repurposing candidate rankings
+              KG-recorded associations, shown separately from repurposing hypotheses
             </p>
           </div>
         </div>
 
         <span className="text-xs font-mono font-semibold text-slate-600 bg-white px-2.5 py-1 rounded-full border border-slate-200 w-fit">
-          {indications.length} {indications.length === 1 ? 'drug' : 'drugs'} identified
+          {validIndications.length} {validIndications.length === 1 ? 'record' : 'records'} returned
         </span>
       </div>
 
@@ -76,7 +77,7 @@ export const KnownIndications: React.FC<KnownIndicationsProps> = ({ indications,
           <div className="mt-4 pt-3 border-t border-slate-200/60 text-[11px] text-slate-500 flex items-start gap-1.5">
             <AlertCircle className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
             <span>
-              <strong>Indication Scope:</strong> These drugs have established medical or on-label use for {diseaseName} according to the EveryCure Knowledge Graph. They are cataloged here to prevent redundant rediscovery.
+              <strong>Scope:</strong> These are known-indication associations returned by the knowledge graph for {diseaseName}. This display does not independently verify prescribing-label status or clinical appropriateness.
             </span>
           </div>
         </div>
