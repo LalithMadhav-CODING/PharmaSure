@@ -22,6 +22,11 @@ _index = None
 _passages = None
 _demo_cache = None
 
+#: How many evidence-bearing candidates are DISPLAYED at most, best first. This is
+#: a presentation cap only: the candidate pool drawn from the knowledge graph is not
+#: capped, so a long list is truncated for display rather than never considered.
+MAX_DISPLAYED_CANDIDATES = 10
+
 
 def build_corpus(passages: list[dict]) -> tuple[np.ndarray, list[dict]]:
     """Embed passages and build the dense index.
@@ -299,6 +304,72 @@ def _abstention_response(disease: dict, candidates: list, known_indications: lis
     }
 
 
+def _no_verified_evidence_response(query: str, disease: dict, candidates: list,
+                                   known_indications: list, dropped: list,
+                                   timings: dict, live_outcome, evidence_scope: str,
+                                   local_passage_count: int) -> dict:
+    """Abstention for when the graph offers candidates but none has verified evidence.
+
+    Distinct from `no_candidates` (the graph proposed nothing) and from
+    `no_relevant_evidence` (a live provider was consulted and found nothing). Here
+    the graph did propose candidates and literature may even have been retrieved —
+    but no candidate's quotations verified, so no candidate row is shown.
+
+    Every dropped candidate is listed in candidate_pool so availability is not
+    hidden and the abstention is auditable.
+    """
+    pool = [
+        {
+            "drug": c.get("drug"),
+            "graph_rank": c["evidence_summary"]["graph_rank"],
+            "graph_score": c["evidence_summary"].get("graph_score"),
+            "evidence_status": c["evidence_summary"].get("evidence_status"),
+            "literature_score": c["evidence"].get("score"),
+        }
+        for c in dropped
+    ]
+
+    if evidence_scope == coverage.EVIDENCE_SCOPE_LIVE:
+        detail = (
+            "live literature was retrieved and bound to graph candidates, but none "
+            "of the resulting claims passed verbatim quotation verification"
+        )
+    elif local_passage_count > 0:
+        detail = (
+            f"the indexed corpus holds {local_passage_count} passage(s) for this "
+            f"disease, but none produced a candidate claim that passed verbatim "
+            f"quotation verification"
+        )
+    else:
+        detail = "no candidate-specific evidence was retrieved"
+
+    return {
+        "status": "no_verified_evidence",
+        "query": query,
+        "message": (
+            f"'{disease['name']}' has {len(candidates)} graph candidate(s), but {detail}. "
+            f"No candidate rows are shown because a candidate with no verified "
+            f"quotation is not a weaker hypothesis, it is an absent one. This is an "
+            f"absence of verified evidence, not evidence of ineffectiveness."
+        ),
+        "disease": disease,
+        "results": [],
+        "candidate_pool": pool,
+        "known_indications": known_indications,
+        "passages": [],
+        "evidence_scope": coverage.EVIDENCE_SCOPE_NONE,
+        "coverage": _build_coverage(
+            disease, candidates, live_outcome, [],
+            coverage.EVIDENCE_SCOPE_NONE, local_passage_count,
+        ),
+        "timings_ms": timings,
+        "from_cache": False,
+        "corpus_schema_version": coverage.CORPUS_SCHEMA_VERSION,
+        "scoring_function": audit.SCORING_FUNCTION_ID,
+        "ranking_method": "evidence_score_desc",
+    }
+
+
 def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = None) -> dict:
     """End-to-end: resolve → candidates → retrieve → rerank/score → generate → verify.
 
@@ -422,7 +493,7 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
 
     # Step 2: Get candidates from KG
     t0 = time.time()
-    cand_result = kg.get_candidates(disease["id"], top_n=10)
+    cand_result = kg.get_candidates(disease["id"])
     candidates = cand_result["candidates"]
     known_indications = cand_result["known_indications"]
     timings["kg_ms"] = int((time.time() - t0) * 1000)
@@ -730,8 +801,33 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
         c["evidence_summary"]["graph_rank"],
         c["drug"].lower(),
     ))
+
+    # Drop candidates that attracted no verified evidence.
+    #
+    # A zero-score row is not a weak hypothesis, it is an absent one: it has no
+    # verified quotation to show, so displaying it invites the reader to compare
+    # candidates on nothing and makes the list look padded with unrelated drugs.
+    # Graph availability is NOT hidden — every dropped candidate is still reported
+    # in candidate_pool with its graph rank.
+    dropped_zero_score = [c for c in results if (c["evidence"].get("score") or 0.0) <= 0.0]
+    results = [c for c in results if (c["evidence"].get("score") or 0.0) > 0.0]
+
+    # Display cap. This is deliberately separate from the candidate-pool size: the
+    # pool is whatever the graph supplies (uncapped), while at most this many
+    # evidence-bearing candidates are shown, best first. Over the cap is recorded so
+    # the truncation is visible rather than silent.
+    display_cap = MAX_DISPLAYED_CANDIDATES
+    over_display_cap = max(0, len(results) - display_cap)
+    results = results[:display_cap]
+
     for position, candidate in enumerate(results, start=1):
         candidate["rank"] = position
+
+    if not results:
+        return _no_verified_evidence_response(
+            query, disease, candidates, known_indications, dropped_zero_score,
+            timings, live_outcome, evidence_scope, local_passage_count,
+        )
 
     # Step 8: Citation-level counterfactual evidence audit (additive).
     # Pure deterministic recomputation over the evidence already retrieved: no LLM
@@ -791,6 +887,12 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
         # it, so re-weighting the scorer cannot serve stale scores.
         "scoring_function": audit.SCORING_FUNCTION_ID,
         "ranking_method": "evidence_score_desc",
+        # Display truncation, stated so it is never silent: how many
+        # evidence-bearing candidates existed, and how many were withheld by the
+        # display cap. A zero-score candidate is excluded entirely, not counted here.
+        "candidates_with_evidence": len(results) + over_display_cap,
+        "displayed_candidate_cap": MAX_DISPLAYED_CANDIDATES,
+        "candidates_over_display_cap": over_display_cap,
     }
 
     if live_outcome is not None:

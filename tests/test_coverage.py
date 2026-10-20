@@ -149,7 +149,10 @@ def test_uncovered_disease_message_does_not_claim_ineffectiveness():
 def test_known_disease_still_works_after_coverage_gate():
     result = pipeline.run_pipeline(KNOWN_DISEASE)
     assert result["status"] == "ok"
-    assert len(result["results"]) == 10
+    # Candidates with no verified evidence are not displayed, so the count is driven
+    # by corpus coverage rather than a fixed list length.
+    assert len(result["results"]) >= 1
+    assert all(c["evidence"]["score"] > 0 for c in result["results"])
     assert result["evidence_scope"] == coverage.EVIDENCE_SCOPE_LOCAL
     assert result["coverage"]["local_literature_available"] is True
     assert result["coverage"]["local_passage_count"] > 0

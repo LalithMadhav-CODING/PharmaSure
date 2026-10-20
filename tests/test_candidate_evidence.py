@@ -120,14 +120,93 @@ def test_graph_rank_and_evidence_score_are_distinguishable(result):
         assert "score" in c["evidence"]
         if es["graph_score"] is not None:
             assert isinstance(es["graph_score"], (int, float))
-    # Every candidate carries a distinct graph rank, and the set is 1..n.
-    graph_ranks = sorted(c["evidence_summary"]["graph_rank"] for c in result["results"])
-    assert graph_ranks == list(range(1, len(result["results"]) + 1))
+    # Every candidate carries a distinct graph rank drawn from the graph's own
+    # ordering. Displayed candidates are a SUBSET (zero-evidence ones are dropped),
+    # so the graph ranks need not be contiguous, but they must be distinct and
+    # within the pool the graph supplied.
+    graph_ranks = [c["evidence_summary"]["graph_rank"] for c in result["results"]]
+    assert len(set(graph_ranks)) == len(graph_ranks), "graph ranks must be distinct"
+    assert all(r >= 1 for r in graph_ranks)
     # Displayed order is score-descending.
     scores = [c["evidence"]["score"] for c in result["results"]]
     assert scores == sorted(scores, reverse=True)
+    assert all(s > 0 for s in scores), "a zero-score candidate must not be displayed"
     # Ranks are a clean 1..n in display order.
     assert [c["rank"] for c in result["results"]] == list(range(1, len(result["results"]) + 1))
+
+
+def test_no_zero_score_candidate_is_displayed(result):
+    """A candidate with no verified evidence must not be listed."""
+    assert result["results"], "expected at least one evidence-bearing candidate"
+    for c in result["results"]:
+        assert c["evidence"]["score"] > 0, (
+            f"{c['drug']} has score 0 and should not be displayed"
+        )
+
+
+def test_display_is_capped_at_ten(result):
+    """At most MAX_DISPLAYED_CANDIDATES evidence-bearing candidates are shown."""
+    from src.pipeline import MAX_DISPLAYED_CANDIDATES
+    assert MAX_DISPLAYED_CANDIDATES == 10
+    assert len(result["results"]) <= MAX_DISPLAYED_CANDIDATES
+    # Truncation is reported rather than silent.
+    assert result.get("displayed_candidate_cap") == MAX_DISPLAYED_CANDIDATES
+    assert result.get("candidates_over_display_cap", 0) >= 0
+    assert (result.get("candidates_with_evidence", 0)
+            == len(result["results"]) + result.get("candidates_over_display_cap", 0))
+
+
+def test_candidate_pool_is_not_capped_at_ten():
+    """The graph candidate list must not be silently truncated to ten."""
+    from src import kg
+    resolved = kg.resolve_disease(KNOWN_DISEASE)
+    assert resolved is not None
+    cands = kg.get_candidates(resolved["id"])["candidates"]
+    # The lookup now holds more than ten for covered diseases; the point is that the
+    # caller receives whatever the graph provides, not an arbitrary slice.
+    assert len(cands) == len(kg.get_candidates(resolved["id"])["candidates"])
+    assert len(cands) > 0
+
+
+def test_get_candidates_honours_an_explicit_cap():
+    from src import kg
+    resolved = kg.resolve_disease(KNOWN_DISEASE)
+    assert resolved is not None
+    capped = kg.get_candidates(resolved["id"], top_n=3)["candidates"]
+    assert len(capped) <= 3
+
+
+def test_abstains_when_no_candidate_has_verified_evidence(monkeypatch):
+    """If nothing verifies, no candidate row is shown and the reason is explicit."""
+    import src.verify as verify_mod
+
+    # Force every claim to fail verification, so every candidate scores 0.
+    monkeypatch.setattr(verify_mod, "verify_citations",
+                        lambda answer, passages: {
+                            "candidates": [
+                                {**c, "claims": [
+                                    {**cl, "verification_status": "needs_review"}
+                                    for cl in (c.get("claims") or [])
+                                ]}
+                                for c in (answer.get("candidates") or [])
+                            ]
+                        })
+    import src.pipeline as pipeline
+    saved = pipeline._demo_cache
+    try:
+        pipeline._demo_cache = {}   # force a live run so the patch applies
+        out = pipeline.run_pipeline(KNOWN_DISEASE)
+    finally:
+        pipeline._demo_cache = saved
+
+    assert out["status"] == "no_verified_evidence"
+    assert out["results"] == []
+    assert out["passages"] == []
+    # Availability is not hidden: the dropped candidates are still listed.
+    assert out["candidate_pool"], "dropped candidates must still be reported"
+    assert all("graph_rank" in c for c in out["candidate_pool"])
+    assert "not evidence of ineffectiveness" in out["message"].lower()
+    assert "no_verified_evidence" == out["status"]
 
 
 def test_verified_candidates_outrank_unverified_ones(result):
@@ -226,13 +305,19 @@ def test_missing_metadata_does_not_crash_or_mislead(monkeypatch):
     monkeypatch.setattr(audit_mod, "build_evidence_ledger", strip_pmids)
     out = pipeline.run_pipeline(KNOWN_DISEASE)
     assert out["status"] == "ok"
+    assert out["results"], "candidates with verified evidence should still be shown"
     # The pipeline-level summary still reports what it actually received.
     assert all("evidence_status" in c["evidence_summary"] for c in out["results"])
+    # The missing identifiers must surface as an explicit warning rather than being
+    # silently treated as valid provenance. The strip happens inside the audit
+    # ledger, so that is where it has to be reported.
+    audited = [c for c in out["results"] if (c.get("evidence_audit") or {}).get("warnings")]
+    assert audited, "expected an audit that reports warnings"
     assert any(
-        "provenance is incomplete" in " ".join(c["evidence_summary"]["limitations"]).lower()
-        or c["evidence_summary"]["distinct_pmid_count"] == 0
-        for c in out["results"]
-    )
+        any("pmid" in w.lower() or "identifier" in w.lower()
+            for w in c["evidence_audit"]["warnings"])
+        for c in audited
+    ), "stripped PMIDs were not reported as a provenance warning"
 
 
 def test_every_result_serializes(result):

@@ -78,12 +78,15 @@ def test_query_alzheimers():
     assert data["status"] == "ok"
     # Resolution returns the canonical KG name, not the user's typographic form.
     assert data["disease"]["name"] == ALZHEIMER
-    assert len(data["results"]) == 10
+    # Only candidates that attracted verified evidence are shown. A zero-score row
+    # is an absent hypothesis, not a weak one, so it is not listed.
+    assert len(data["results"]) >= 1
+    assert all(c["evidence"]["score"] > 0 for c in data["results"])
     assert len(data["known_indications"]) == 13
     assert data.get("from_cache") is True
 
     ranks = [c["rank"] for c in data["results"]]
-    assert ranks == list(range(1, 11))
+    assert ranks == list(range(1, len(data["results"]) + 1))
 
     # Directions come from the model; only assert the ones the cache produces.
     directions = {c["direction"] for c in data["results"]}
@@ -116,19 +119,27 @@ def test_query_alzheimers():
 
 
 def test_all_demo_queries():
-    """All demo queries return ok with 10 candidates and their real known counts."""
+    """All demo queries return ok with only evidence-bearing candidates shown.
+
+    The candidate COUNT is no longer a fixed 10: candidates with no verified
+    evidence are dropped, so the count reflects how many candidates the corpus
+    actually supports. Known-indication counts are unchanged.
+    """
     queries = [
-        ("Parkinson's disease", 10, 27),
-        ("Multiple myeloma", 10, 13),
-        ("Type 2 diabetes", 10, 40),
-        ("Asthma", 10, 27),
+        ("Parkinson's disease", 27),
+        ("Multiple myeloma", 13),
+        ("Type 2 diabetes", 40),
+        ("Asthma", 27),
     ]
-    for q, expected_cands, expected_known in queries:
+    for q, expected_known in queries:
         resp = client.post("/api/query", json={"query": q})
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "ok", f"Query {q} failed: {data}"
-        assert len(data["results"]) == expected_cands, f"{q}: candidate count"
+        assert len(data["results"]) >= 1, f"{q}: expected at least one candidate"
+        assert all(c["evidence"]["score"] > 0 for c in data["results"]), (
+            f"{q}: a zero-score candidate was displayed"
+        )
         assert len(data["known_indications"]) == expected_known, f"{q}: known count"
 
 

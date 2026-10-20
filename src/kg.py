@@ -70,8 +70,13 @@ def resolve_disease(query: str) -> dict | None:
     return None
 
 
-def get_candidates(disease_id: str, top_n: int = 10) -> dict:
+def get_candidates(disease_id: str, top_n: int | None = None) -> dict:
     """Get candidate drugs and known indications for a disease from pre-computed lookup.
+
+    ``top_n=None`` returns every candidate the lookup holds for the disease. There
+    is no built-in cap: an arbitrary limit silently truncates the hypothesis set,
+    and the caller is better placed to decide what to do with a long list (for
+    example, showing only candidates that actually attracted evidence).
 
     Returns:
         {
@@ -83,9 +88,12 @@ def get_candidates(disease_id: str, top_n: int = 10) -> dict:
 
     entry = lookup.get(disease_id, {"c": [], "k": []})
 
-    # Build candidate list from pre-computed top-10
+    # Build candidate list from the pre-computed ranking.
+    items = entry.get("c", [])
+    if top_n is not None:
+        items = items[:top_n]
     candidates = []
-    for item in entry.get("c", [])[:top_n]:
+    for item in items:
         ec_id, score = item[0], item[1]
         drug_name = _get_drug_name(drugs_lookup, ec_id)
         candidates.append({
