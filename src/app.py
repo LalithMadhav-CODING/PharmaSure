@@ -15,9 +15,9 @@ if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
 
 try:
-    from . import pipeline
+    from . import pipeline, coverage
 except (ImportError, ValueError):
-    from src import pipeline
+    from src import pipeline, coverage
 
 
 def format_result(result: dict) -> str:
@@ -224,18 +224,37 @@ def create_app() -> FastAPI:
 
     @server.get("/api/health")
     def health_endpoint():
-        """Health and metadata endpoint returning corpus size and supported diseases."""
-        # Report the real corpus size rather than a hardcoded literal.
-        try:
-            _, passages = pipeline.load_index()
-            corpus_size = len(passages) if passages else 0
-        except Exception:
-            corpus_size = 0
+        """Health and coverage metadata.
+
+        Distinguishes knowledge-graph vocabulary from local literature coverage.
+        They are very different numbers, and conflating them overstates what the
+        system can actually evidence: the graph recognises ~23k diseases, while
+        the indexed corpus holds abstracts for only a small subset.
+        """
+        cov = coverage.coverage_metadata()
         return {
             "status": "ok",
-            "corpus_size": corpus_size,
-            "disease_count": 23224,
-            "all_diseases_supported": True,
+
+            # --- knowledge-graph vocabulary ---
+            "disease_count": cov["kg_disease_count"],
+            "kg_disease_count": cov["kg_disease_count"],
+            "kg_diseases_with_candidates": cov["kg_diseases_with_candidates"],
+            "graph_candidates_available": True,
+
+            # --- local literature coverage ---
+            "corpus_size": cov["local_abstract_count"],
+            "local_abstract_count": cov["local_abstract_count"],
+            "local_literature_disease_count": cov["local_literature_disease_count"],
+            "local_unique_pmid_count": cov["local_unique_pmid_count"],
+            "corpus_schema_version": cov["corpus_schema_version"],
+
+            # --- capability flags, stated explicitly rather than implied ---
+            # Not every resolvable disease has local evidence, so this is False.
+            "all_diseases_supported": False,
+            "live_retrieval_enabled": cov["live_retrieval_enabled"],
+            "live_retrieval_provider": cov["live_retrieval_provider"],
+
+            "demo_supported_diseases": pipeline.get_supported_diseases_list(),
             "supported_diseases": pipeline.get_supported_diseases_list(),
             "data_sources": [
                 "EveryCure Knowledge Graph (matrix-scores)",

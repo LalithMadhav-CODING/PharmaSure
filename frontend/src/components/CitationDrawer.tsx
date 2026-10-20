@@ -1,6 +1,7 @@
-import React, { useEffect } from 'react';
-import { X, ExternalLink, BookOpen, AlertCircle, CheckCircle2, Calendar, FileCode, Tag } from 'lucide-react';
+import React, { useEffect, useRef } from 'react';
+import { AlertCircle, BookOpen, ExternalLink, FileCode, X } from 'lucide-react';
 import { Passage } from '../types';
+import { pubmedUrlFor, safeSourceUrl } from '../services/evidence';
 
 interface CitationDrawerProps {
   isOpen: boolean;
@@ -8,6 +9,7 @@ interface CitationDrawerProps {
   citationId: string | number | null;
   passages: Passage[];
   targetQuote?: string;
+  sourceUrl?: string;
 }
 
 export const CitationDrawer: React.FC<CitationDrawerProps> = ({
@@ -16,255 +18,148 @@ export const CitationDrawer: React.FC<CitationDrawerProps> = ({
   citationId,
   passages,
   targetQuote = '',
+  sourceUrl,
 }) => {
-  // Handle Escape key to close
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
-        onClose();
+    if (!isOpen) return undefined;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeButtonRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+      if (event.key === 'Tab') {
+        const drawer = document.getElementById('citation-drawer');
+        const focusable = drawer?.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])');
+        if (!focusable || focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      previouslyFocused?.focus();
+    };
   }, [isOpen, onClose]);
 
-  if (!isOpen) return null;
+  if (!isOpen || citationId === null) return null;
 
-  // Resolve matching passage by id
-  // Support both string and number comparisons (e.g. "1" == 1)
-  const matchedPassage = passages.find(
-    (p) => String(p.id).trim().toLowerCase() === String(citationId).trim().toLowerCase()
-  );
-
-  // Quote matching & highlighting algorithm
-  const renderHighlightedPassage = (passageText: string, quote: string) => {
-    if (!quote || !quote.trim()) {
-      return <span>{passageText}</span>;
-    }
-
-    // Attempt direct case-insensitive match
-    const lowerPassage = passageText.toLowerCase();
-    const lowerQuote = quote.trim().toLowerCase();
-    const index = lowerPassage.indexOf(lowerQuote);
-
-    if (index !== -1) {
-      const before = passageText.substring(0, index);
-      const match = passageText.substring(index, index + quote.trim().length);
-      const after = passageText.substring(index + quote.trim().length);
-
-      return (
-        <>
-          <span>{before}</span>
-          <mark className="quote-highlight font-medium">
-            {match}
-          </mark>
-          <span>{after}</span>
-        </>
-      );
-    }
-
-    // Attempt normalized whitespace fuzzy match
-    const normalize = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
-    const normP = normalize(passageText);
-    const normQ = normalize(quote);
-
-    if (normP.includes(normQ)) {
-      // Find approximate span in original text
-      const firstWord = normQ.split(' ')[0];
-      const lastWord = normQ.split(' ').slice(-1)[0];
-      const startIdx = lowerPassage.indexOf(firstWord);
-      const endWordIdx = lowerPassage.indexOf(lastWord, startIdx !== -1 ? startIdx : 0);
-
-      if (startIdx !== -1 && endWordIdx !== -1 && endWordIdx + lastWord.length > startIdx) {
-        const before = passageText.substring(0, startIdx);
-        const match = passageText.substring(startIdx, endWordIdx + lastWord.length);
-        const after = passageText.substring(endWordIdx + lastWord.length);
-
-        return (
-          <>
-            <span>{before}</span>
-            <mark className="quote-highlight font-medium">
-              {match}
-            </mark>
-            <span>{after}</span>
-          </>
-        );
-      }
-    }
-
-    // Match not found
-    return (
-      <div>
-        <p className="mb-3 text-slate-800 leading-relaxed">{passageText}</p>
-        <div className="p-2.5 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800 flex items-start gap-2">
-          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-          <span>
-            <strong>Quotation notice:</strong> Supporting quotation could not be matched exactly to the displayed passage.
-          </span>
-        </div>
-      </div>
-    );
-  };
-
-  const hasValidPmid = matchedPassage?.pmid && /^\d+$/.test(String(matchedPassage.pmid).trim());
+  const matchedPassage = passages.find((passage) => String(passage.id) === String(citationId));
+  const matchingSourceUrl = safeSourceUrl(sourceUrl)
+    || safeSourceUrl(matchedPassage?.source_url)
+    || pubmedUrlFor(matchedPassage?.pmid);
+  const validQuote = targetQuote.trim();
+  const passageText = matchedPassage?.text || '';
+  const exactQuoteIndex = validQuote ? passageText.indexOf(validQuote) : -1;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs transition-opacity"
-        onClick={onClose}
-        aria-hidden="true"
-      />
+    <div className="fixed inset-0 z-50 overflow-hidden" role="dialog" aria-modal="true" aria-labelledby="citation-drawer-title">
+      <button type="button" className="absolute inset-0 bg-slate-950/40" onClick={onClose} aria-label="Close source passage viewer" />
+      <aside id="citation-drawer" tabIndex={-1} className="absolute inset-y-0 right-0 flex w-full max-w-2xl flex-col border-l border-slate-200 bg-white shadow-2xl">
+        <header className="flex items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-4 py-4 sm:px-6">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="rounded-lg border border-slate-200 bg-white p-2 text-teal-800"><BookOpen className="h-5 w-5" aria-hidden="true" /></span>
+            <div className="min-w-0">
+              <h2 id="citation-drawer-title" className="break-words text-base font-semibold text-slate-950">
+                {matchedPassage?.title || `Source passage [${citationId}]`}
+              </h2>
+              <p className="mt-1 text-xs text-slate-500">
+                {matchedPassage?.source || 'Source name not returned'}
+                {matchedPassage?.pmid ? ` · PMID ${matchedPassage.pmid}` : ''}
+              </p>
+            </div>
+          </div>
+          <button ref={closeButtonRef} type="button" onClick={onClose} className="rounded-lg p-2 text-slate-500 hover:bg-slate-200 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-700" aria-label="Close citation drawer">
+            <X className="h-5 w-5" aria-hidden="true" />
+          </button>
+        </header>
 
-      <div className="fixed inset-y-0 right-0 max-w-full flex pl-10">
-        <div className="w-screen max-w-xl bg-white shadow-2xl border-l border-slate-200 flex flex-col h-full transform transition-all duration-300 ease-in-out">
-          {/* Drawer Header */}
-          <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <span className="p-2 rounded-lg bg-brand-100 text-brand-800">
-                <BookOpen className="w-5 h-5 text-brand-700" />
-              </span>
-              <div>
-                <h3 id="drawer-title" className="text-base sm:text-lg font-bold text-navy-900 flex items-center gap-2">
-                  <span>Source Passage [{citationId}]</span>
-                  {matchedPassage && (
-                    <span className="text-xs font-normal text-slate-500 uppercase tracking-wider bg-slate-200 px-2 py-0.5 rounded">
-                      {matchedPassage.source}
-                    </span>
+        <div className="flex-1 space-y-5 overflow-y-auto p-4 sm:p-6">
+          {!matchedPassage ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-5">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="mt-0.5 h-5 w-5 text-amber-700" aria-hidden="true" />
+                <div>
+                  <h3 className="text-sm font-semibold text-amber-950">Passage not included in this response</h3>
+                  <p className="mt-1 text-xs leading-5 text-amber-950">The returned identifier [{citationId}] is not present in the response&apos;s passage collection. No source text is fabricated here.</p>
+                  {matchingSourceUrl && (
+                    <a href={matchingSourceUrl} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-teal-800 hover:underline">
+                      Open returned source link <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                    </a>
                   )}
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Primary literature grounding for drug repurposing claims
-                </p>
+                </div>
               </div>
             </div>
+          ) : (
+            <>
+              <dl className="grid gap-2 sm:grid-cols-3">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <dt className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Publication year</dt>
+                  <dd className="mt-1 text-sm font-medium text-slate-900">{matchedPassage.year ?? 'Not returned'}</dd>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <dt className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Publication type</dt>
+                  <dd className="mt-1 text-sm font-medium capitalize text-slate-900">{matchedPassage.pub_type?.replace(/_/g, ' ') || 'Not returned'}</dd>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <dt className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Stable identifier</dt>
+                  <dd className="mt-1 break-all font-mono text-sm font-medium text-slate-900">{matchedPassage.pmid ? `PMID ${matchedPassage.pmid}` : 'PMID not returned'}</dd>
+                </div>
+              </dl>
 
-            <button
-              onClick={onClose}
-              className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500 transition-colors"
-              aria-label="Close citation drawer"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
+              {validQuote && (
+                <section className="rounded-xl border border-teal-200 bg-teal-50/60 p-4" aria-labelledby="returned-quote-heading">
+                  <h3 id="returned-quote-heading" className="text-xs font-semibold text-teal-950">Exact returned quotation</h3>
+                  <blockquote className="mt-2 border-l-2 border-teal-700 pl-3 text-sm leading-6 text-slate-800">“{validQuote}”</blockquote>
+                  {exactQuoteIndex < 0 && <p className="mt-2 text-[11px] leading-4 text-teal-950">This quotation was not found as an exact contiguous substring in the passage returned to the browser. It is shown as supplied by the API; no source offset is inferred.</p>}
+                </section>
+              )}
 
-          {/* Drawer Body */}
-          <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
-            {!matchedPassage ? (
-              <div className="p-6 bg-slate-50 rounded-xl border border-slate-200 text-center space-y-2">
-                <AlertCircle className="w-8 h-8 text-amber-500 mx-auto" />
-                <h4 className="text-sm font-semibold text-slate-800">Passage Unavailable</h4>
-                <p className="text-xs text-slate-500">
-                  Citation identifier [{citationId}] was referenced in a claim, but is not present in the returned passage collection.
-                </p>
+              <section aria-labelledby="passage-text-heading">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <h3 id="passage-text-heading" className="text-xs font-semibold uppercase tracking-wide text-slate-600">Returned passage text</h3>
+                  {matchingSourceUrl && (
+                    <a href={matchingSourceUrl} target="_blank" rel="noopener noreferrer" className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-teal-800 hover:underline">
+                      Open source <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                    </a>
+                  )}
+                </div>
+                <div className="whitespace-pre-wrap rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-800">
+                  {exactQuoteIndex >= 0 && validQuote ? (
+                    <>
+                      {passageText.slice(0, exactQuoteIndex)}
+                      <mark className="rounded bg-amber-200 px-0.5 text-slate-950">{passageText.slice(exactQuoteIndex, exactQuoteIndex + validQuote.length)}</mark>
+                      {passageText.slice(exactQuoteIndex + validQuote.length)}
+                    </>
+                  ) : passageText || 'Passage text was not returned.'}
+                </div>
+              </section>
+
+              <div className="rounded-xl border border-slate-200 bg-white p-3 text-[11px] leading-5 text-slate-600">
+                <p className="flex items-center gap-1.5 font-semibold text-slate-800"><FileCode className="h-3.5 w-3.5" aria-hidden="true" />Verification boundary</p>
+                <p className="mt-1">The evidence record shows the verification state returned by the backend. A source identity or quotation match does not establish candidate relevance, validate an interpretation, or demonstrate clinical efficacy or safety.</p>
               </div>
-            ) : (
-              <>
-                {/* Passage Metadata Badges */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
-                  <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
-                    <span className="text-slate-400 block text-[10px] uppercase font-semibold">Study Type</span>
-                    <span className="font-semibold text-slate-800 capitalize">
-                      {matchedPassage.pub_type?.replace('_', ' ') || 'Unspecified'}
-                    </span>
-                  </div>
-
-                  <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
-                    <span className="text-slate-400 block text-[10px] uppercase font-semibold">Year Published</span>
-                    <span className="font-semibold text-slate-800 font-mono">
-                      {matchedPassage.year || 'N/A'}
-                    </span>
-                  </div>
-
-                  <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200 col-span-2 sm:col-span-1">
-                    <span className="text-slate-400 block text-[10px] uppercase font-semibold">PubMed Identifier</span>
-                    {hasValidPmid ? (
-                      <a
-                        href={`https://pubmed.ncbi.nlm.nih.gov/${matchedPassage.pmid}/`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="font-mono font-bold text-brand-700 hover:text-brand-900 inline-flex items-center gap-1 hover:underline"
-                        title="Open citation directly in PubMed"
-                      >
-                        <span>PMID: {matchedPassage.pmid}</span>
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    ) : (
-                      <span className="font-mono text-slate-500">
-                        {matchedPassage.pmid || 'No PMID available'}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Target Quote Highlighted Callout */}
-                {targetQuote && (
-                  <div className="p-3.5 bg-amber-50/70 border border-amber-200 rounded-xl space-y-1.5">
-                    <div className="flex items-center justify-between text-xs font-semibold text-amber-900">
-                      <span className="flex items-center gap-1.5">
-                        <CheckCircle2 className="w-4 h-4 text-amber-600" />
-                        <span>Supporting Claim Quote</span>
-                      </span>
-                      <span className="text-[10px] font-mono text-amber-700 uppercase bg-amber-100 px-1.5 py-0.5 rounded">
-                        Target Quote
-                      </span>
-                    </div>
-                    <blockquote className="text-xs text-amber-950 italic leading-relaxed pl-2 border-l-2 border-amber-400">
-                      &ldquo;{targetQuote}&rdquo;
-                    </blockquote>
-                  </div>
-                )}
-
-                {/* Full Passage Text */}
-                <div className="space-y-2">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Corpus Passage Text
-                  </h4>
-                  <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 text-sm leading-relaxed text-slate-800 font-normal">
-                    {renderHighlightedPassage(matchedPassage.text, targetQuote)}
-                  </div>
-                </div>
-
-                {/* Verification Integrity Notice */}
-                <div className="p-3 bg-slate-100 rounded-lg text-xs text-slate-600 space-y-1 border border-slate-200">
-                  <div className="font-semibold text-navy-900 flex items-center gap-1.5">
-                    <FileCode className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Citation Verification Architecture</span>
-                  </div>
-                  <p className="text-[11px] leading-relaxed text-slate-500">
-                    The PharmaSure verification engine validates that the cited drug and disease appear within the passage and checks claim substrings against indexed tokens before presentation.
-                  </p>
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Drawer Footer */}
-          <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
-            {hasValidPmid ? (
-              <a
-                href={`https://pubmed.ncbi.nlm.nih.gov/${matchedPassage.pmid}/`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-brand-700 bg-brand-50 border border-brand-300 rounded-lg hover:bg-brand-100 transition-colors"
-              >
-                <span>Read Full Paper on PubMed</span>
-                <ExternalLink className="w-3.5 h-3.5" />
-              </a>
-            ) : (
-              <span className="text-xs text-slate-400">No external link available</span>
-            )}
-
-            <button
-              onClick={onClose}
-              className="px-4 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 transition-colors"
-            >
-              Close
-            </button>
-          </div>
+            </>
+          )}
         </div>
-      </div>
+
+        <footer className="flex items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:px-6">
+          {matchingSourceUrl ? (
+            <a href={matchingSourceUrl} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-xs font-semibold text-teal-900 hover:bg-teal-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-700">
+              Read source <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+            </a>
+          ) : <span className="text-xs text-slate-500">No safe external source URL returned</span>}
+          <button type="button" onClick={onClose} className="min-h-9 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-700">Close</button>
+        </footer>
+      </aside>
     </div>
   );
 };

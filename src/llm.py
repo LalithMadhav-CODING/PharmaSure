@@ -178,7 +178,11 @@ Respond in JSON format:
             # tokens from consuming the output budget.
             "think": False,
             "options": {
-                "temperature": 0.1,
+                # Greedy decoding. Verification is a scored term now, so the score
+                # depends on the generated claims: a sampled generation makes the
+                # score non-reproducible for the same query. Reproducibility is a
+                # stated requirement, so this must be deterministic.
+                "temperature": 0.0,
                 # Prompt measures ~3.7k tokens; 8192 leaves ample room for the
                 # reply while keeping the KV cache small enough that all 27B
                 # weights stay on the GPU (16384 spilled ~1.9GB to CPU and cost

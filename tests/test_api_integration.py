@@ -32,6 +32,17 @@ client = TestClient(app)
 ALZHEIMER = "Alzheimer disease"
 
 
+@pytest.fixture(autouse=True)
+def _disable_live_retrieval(monkeypatch):
+    """Keep this suite offline and pin the LOCAL abstention semantics.
+
+    Live retrieval is on by default in production. This file asserts the
+    local-corpus boundary, so it disables the live path; the live path is covered
+    separately in tests/test_live_retrieval.py and tests/test_live_pipeline.py.
+    """
+    monkeypatch.setenv("PHARMASURE_LIVE_RETRIEVAL", "0")
+
+
 def _norm(text: str) -> str:
     """Whitespace/quote-insensitive comparison, mirroring src/verify.py."""
     t = (text or "").lower().replace("\u2019", "'").replace("\u2018", "'")
@@ -67,12 +78,15 @@ def test_query_alzheimers():
     assert data["status"] == "ok"
     # Resolution returns the canonical KG name, not the user's typographic form.
     assert data["disease"]["name"] == ALZHEIMER
-    assert len(data["results"]) == 10
+    # Only candidates that attracted verified evidence are shown. A zero-score row
+    # is an absent hypothesis, not a weak one, so it is not listed.
+    assert len(data["results"]) >= 1
+    assert all(c["evidence"]["score"] > 0 for c in data["results"])
     assert len(data["known_indications"]) == 13
     assert data.get("from_cache") is True
 
     ranks = [c["rank"] for c in data["results"]]
-    assert ranks == list(range(1, 11))
+    assert ranks == list(range(1, len(data["results"]) + 1))
 
     # Directions come from the model; only assert the ones the cache produces.
     directions = {c["direction"] for c in data["results"]}
@@ -105,19 +119,27 @@ def test_query_alzheimers():
 
 
 def test_all_demo_queries():
-    """All demo queries return ok with 10 candidates and their real known counts."""
+    """All demo queries return ok with only evidence-bearing candidates shown.
+
+    The candidate COUNT is no longer a fixed 10: candidates with no verified
+    evidence are dropped, so the count reflects how many candidates the corpus
+    actually supports. Known-indication counts are unchanged.
+    """
     queries = [
-        ("Parkinson's disease", 10, 27),
-        ("Multiple myeloma", 10, 13),
-        ("Type 2 diabetes", 10, 40),
-        ("Asthma", 10, 27),
+        ("Parkinson's disease", 27),
+        ("Multiple myeloma", 13),
+        ("Type 2 diabetes", 40),
+        ("Asthma", 27),
     ]
-    for q, expected_cands, expected_known in queries:
+    for q, expected_known in queries:
         resp = client.post("/api/query", json={"query": q})
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "ok", f"Query {q} failed: {data}"
-        assert len(data["results"]) == expected_cands, f"{q}: candidate count"
+        assert len(data["results"]) >= 1, f"{q}: expected at least one candidate"
+        assert all(c["evidence"]["score"] > 0 for c in data["results"]), (
+            f"{q}: a zero-score candidate was displayed"
+        )
         assert len(data["known_indications"]) == expected_known, f"{q}: known count"
 
 
@@ -131,14 +153,38 @@ def test_unsupported_disease():
     assert len(data["results"]) == 0
 
 
-def test_insufficient_evidence():
-    """A resolvable disease with no candidate drugs abstains explicitly."""
-    # Resolves in the KG, but has no candidate set.
+def test_no_candidates_status():
+    """A resolvable disease with no candidate drugs reports a distinct status.
+
+    Previously this returned the vaguer `insufficient_evidence`; Phase 1 split
+    the outcomes so "graph has no candidates" is no longer conflated with "no
+    local literature" or "evidence retrieved but insufficient".
+    """
     response = client.post("/api/query", json={"query": "Xanthomatous hypophysitis"})
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "insufficient_evidence"
+    assert data["status"] == "no_candidates"
     assert len(data["results"]) == 0
+    assert data["evidence_scope"] == "none"
+
+
+def test_no_local_evidence_status():
+    """A graph-resolvable disease absent from the corpus yields no fake evidence.
+
+    The critical Phase 1 guarantee: passages from unrelated diseases must never
+    be presented as evidence for this disease.
+    """
+    response = client.post("/api/query", json={"query": "Zygodactyly type 4"})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "no_local_evidence"
+    assert data["results"] == []
+    assert data["passages"] == []
+    # Candidate availability is still surfaced, but with no evidence claimed. The
+    # reason for the absence is the top-level status; the per-candidate status
+    # only states that no evidence exists for it.
+    assert data["candidate_pool"], "graph candidates should still be listed"
+    assert all(c["evidence_status"] == "no_evidence" for c in data["candidate_pool"])
 
 
 def test_empty_query_validation():
@@ -225,12 +271,23 @@ def test_audit_preserves_the_baseline_score_exactly():
 
 
 def test_audit_rank_is_distinct_from_the_displayed_rank():
+    """The displayed rank is now the EVIDENCE rank; the graph rank is kept separate.
+
+    These were the same number before candidates were ranked by evidence score, so
+    the invariant moved: `rank` now equals the audit's evidence_rank, while the
+    knowledge-graph origin is preserved as displayed_kg_rank and must not be
+    conflated with it.
+    """
     data = _ok_payload()
     for c in data["results"]:
         audit = c["evidence_audit"]
-        assert audit["baseline"]["displayed_kg_rank"] == c["rank"]
-        assert "evidence_rank" in audit["baseline"]
+        assert audit["baseline"]["evidence_rank"] == c["rank"]
+        # The graph origin is still reported, and is the pre-sort position.
+        assert audit["baseline"]["displayed_kg_rank"] == c["evidence_summary"]["graph_rank"]
         assert audit["ranking_scope"] == "evidence_rank_over_retrieved_candidates"
+    # Ordering is by score, descending.
+    scores = [c["evidence"]["score"] for c in data["results"]]
+    assert scores == sorted(scores, reverse=True)
 
 
 def test_audit_does_not_change_the_existing_candidate_contract():
@@ -240,17 +297,23 @@ def test_audit_does_not_change_the_existing_candidate_contract():
 
 
 def test_audit_does_not_change_existing_evidence_scores():
-    """The audit must be additive: scoring behaviour is untouched."""
+    """The audit must be additive: the score is exactly what the scorer returns.
+
+    Recomputes from the published breakdown using the current formula, so a
+    scorer change that was not reflected in the breakdown would be caught.
+    """
     data = _ok_payload()
     for c in data["results"]:
         breakdown = c["evidence"].get("breakdown")
         assert breakdown is not None
-        recomputed = (
-            0.25 * breakdown["relevance"]
-            + 0.35 * breakdown["support"]
-            + 0.40 * breakdown["study_quality"]
+        strength = (
+            breakdown["relevance_weight"] * breakdown["relevance"]
+            + breakdown["support_weight"] * breakdown["support"]
+            + breakdown["study_quality_weight"] * breakdown["study_quality"]
         )
+        recomputed = breakdown["verification"] * strength
         assert c["evidence"]["score"] == pytest.approx(recomputed, abs=0.002)
+        assert breakdown["verification_role"] == "multiplier"
 
 
 def test_audit_counterfactual_deltas_are_consistent():
@@ -307,6 +370,7 @@ def test_audit_does_not_claim_clinical_validity():
 def test_legacy_cached_response_without_audit_does_not_crash():
     """A cache entry predating the audit must degrade explicitly, not error."""
     import src.pipeline as pipeline
+    from src import coverage, audit
 
     saved = pipeline._demo_cache
     try:
@@ -322,6 +386,10 @@ def test_legacy_cached_response_without_audit_does_not_crash():
                 "known_indications": [],
                 "passages": [],
                 "timings_ms": {},
+                # A current-contract entry that predates the audit field. This is
+                # what the test is about: the audit is missing, not the contract.
+                "response_contract_version": coverage.RESPONSE_CONTRACT_VERSION,
+                "scoring_function": audit.SCORING_FUNCTION_ID,
             }
         }
         out = pipeline.run_pipeline("legacy test disease")
@@ -350,7 +418,7 @@ def test_audit_failure_does_not_remove_candidates(monkeypatch):
     try:
         pipeline._demo_cache = {}
         out = pipeline.run_pipeline("Asthma")
-        baseline = [(c["drug"], c["evidence"]["score"]) for c in out["results"]]
+        baseline = [c["drug"] for c in out["results"]]
         assert baseline, "expected candidate results before breaking the audit"
 
         def explode(*a, **k):
@@ -359,8 +427,19 @@ def test_audit_failure_does_not_remove_candidates(monkeypatch):
         monkeypatch.setattr(audit_mod, "attach_audits", explode)
         broken = pipeline.run_pipeline("Asthma")
 
+        # The audit is additive: the same candidates must still be returned with
+        # usable scores, and the failure must be reported rather than swallowed.
+        #
+        # Candidate SET is the invariant, not exact score equality. Scores now depend
+        # on verification, which depends on generated claims, so two live runs are
+        # only comparable because generation is greedy — but set-and-range is the
+        # property this test is actually about (a broken audit must not drop or zero
+        # candidates).
         assert broken["status"] == "ok"
-        assert [(c["drug"], c["evidence"]["score"]) for c in broken["results"]] == baseline
+        assert [c["drug"] for c in broken["results"]] == baseline
+        assert len(broken["results"]) == len(baseline)
+        for c in broken["results"]:
+            assert 0.0 <= c["evidence"]["score"] <= 1.0
         assert broken["evidence_audit_summary"]["status"].startswith("failed")
     finally:
         pipeline._demo_cache = saved

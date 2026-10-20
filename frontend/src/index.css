@@ -1,35 +1,92 @@
 @import "tailwindcss";
 
 @layer base {
+  :root {
+    color-scheme: light;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    background: #f5f7f7;
+  }
+
   body {
-    background-color: #f8fafc;
-    color: #1e293b;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    min-width: 320px;
+    min-height: 100vh;
+    margin: 0;
+    background-color: #f5f7f7;
+    color: #17212b;
+  }
+
+  button,
+  input,
+  select {
+    font: inherit;
+  }
+
+  button:not(:disabled),
+  a[href],
+  summary {
+    cursor: pointer;
+  }
+
+  :focus-visible {
+    outline: 2px solid #0f766e;
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: #ccfbf1;
+    color: #134e4a;
   }
 }
 
-/* Custom scrollbar for biomedical drawer and code snippets */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+.search-hero {
+  background-color: #eef3f3;
 }
+
+.coverage-panel {
+  scroll-margin-top: 7rem;
+}
+
+.candidate-row[aria-pressed="true"] {
+  box-shadow: inset 3px 0 0 #0f766e;
+}
+
+/* Keep tables and drawers usable without custom scroll plugins. */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
   border-radius: 9999px;
+  background: #cbd5e1;
 }
+
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
 
-/* Quote highlight effect */
-.quote-highlight {
-  background-color: #fef08a;
-  color: #713f12;
-  padding: 2px 4px;
-  border-radius: 3px;
-  font-weight: 600;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

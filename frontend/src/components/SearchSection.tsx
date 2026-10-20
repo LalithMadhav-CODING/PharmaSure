@@ -1,147 +1,142 @@
-import React, { useState, FormEvent } from 'react';
-import { Search, Loader2, Sparkles, AlertCircle } from 'lucide-react';
+import React, { FormEvent, useEffect, useState } from 'react';
+import { AlertCircle, ArrowRight, LoaderCircle, Search } from 'lucide-react';
 
 interface SearchSectionProps {
   onSearch: (query: string) => void;
   isLoading: boolean;
+  activeQuery?: string;
   initialQuery?: string;
-  onOpenAbout: () => void;
+  examples?: string[];
 }
-
-const PRIMARY_EXAMPLES = [
-  "Alzheimer's disease",
-  "Parkinson's disease",
-  "Multiple myeloma"
-];
-
-const SECONDARY_EXAMPLES = [
-  "Type 2 diabetes",
-  "Asthma",
-  "Huntington's disease (Abstain Test)"
-];
 
 export const SearchSection: React.FC<SearchSectionProps> = ({
   onSearch,
   isLoading,
+  activeQuery = '',
   initialQuery = '',
-  onOpenAbout
+  examples = [],
 }) => {
   const [query, setQuery] = useState(initialQuery);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const submittingSameQuery = isLoading && query.trim().toLowerCase() === activeQuery.trim().toLowerCase();
 
-  const handleSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    const trimmed = query.trim();
+  useEffect(() => {
+    setQuery(initialQuery);
+  }, [initialQuery]);
+
+  const submitQuery = (value: string) => {
+    const trimmed = value.trim();
     if (!trimmed) {
-      setValidationError('Please enter a disease or condition name.');
+      setValidationError('Enter a disease or condition name to begin.');
       return;
     }
+    if (isLoading && trimmed.toLowerCase() === activeQuery.trim().toLowerCase()) return;
     setValidationError(null);
+    setQuery(trimmed);
     onSearch(trimmed);
   };
 
-  const handleExampleClick = (example: string) => {
-    // Clean string if it contains test hint
-    const cleanQuery = example.split(' (')[0];
-    setQuery(cleanQuery);
-    setValidationError(null);
-    onSearch(cleanQuery);
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    submitQuery(query);
   };
 
   return (
-    <section className="bg-white border-b border-slate-200 py-6 sm:py-8 transition-all" aria-labelledby="search-heading">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="max-w-3xl mx-auto text-center">
-          <h2 id="search-heading" className="text-xl sm:text-2xl font-bold tracking-tight text-navy-900">
-            Investigate Drug Repurposing Hypotheses
+    <section className="search-hero border-b border-slate-200" aria-labelledby="search-heading">
+      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10 lg:px-8">
+        <div className="mx-auto max-w-4xl">
+          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-teal-200 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-teal-800">
+            <span className="h-1.5 w-1.5 rounded-full bg-teal-700" aria-hidden="true" />
+            Evidence-first research workspace
+          </div>
+          <h2 id="search-heading" className="max-w-3xl text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl lg:text-[2.15rem]">
+            Trace the evidence. Challenge the ranking. Understand the uncertainty.
           </h2>
-          <p className="mt-1 text-sm text-slate-700">
-            Dense vector retrieval over biomedical literature with knowledge-graph candidate generation &amp; two-stage citation verification.
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base">
+            Explore knowledge-graph candidates, inspect candidate-linked literature, and test how rankings change when a source is removed.
           </p>
 
-          {/* Search Bar Form */}
-          <form onSubmit={handleSubmit} className="mt-5 relative">
-            <div className="flex flex-col sm:flex-row items-stretch gap-2.5 shadow-sm rounded-xl p-1 bg-white border-2 border-slate-200 focus-within:border-brand-600 focus-within:ring-2 focus-within:ring-brand-100 transition-all">
-              <div className="relative flex-1 flex items-center pl-3">
-                <Search className="w-5 h-5 text-slate-500 mr-2 shrink-0" aria-hidden="true" />
+          <form onSubmit={handleSubmit} className="mt-6" noValidate>
+            <label htmlFor="disease-search" className="mb-2 block text-xs font-semibold text-slate-700">
+              Disease or condition
+            </label>
+            <div className="flex flex-col gap-2 rounded-2xl border border-slate-300 bg-white p-2 shadow-sm focus-within:border-teal-700 focus-within:ring-2 focus-within:ring-teal-700/15 sm:flex-row">
+              <div className="flex min-w-0 flex-1 items-center gap-3 px-2 sm:px-3">
+                <Search className="h-5 w-5 shrink-0 text-slate-500" aria-hidden="true" />
                 <input
-                  type="text"
+                  id="disease-search"
+                  name="disease"
+                  type="search"
+                  autoComplete="off"
                   value={query}
-                  onChange={(e) => {
-                    setQuery(e.target.value);
+                  onChange={(event) => {
+                    setQuery(event.target.value);
                     if (validationError) setValidationError(null);
                   }}
-                  disabled={isLoading}
-                  placeholder="e.g. Alzheimer's disease"
-                  className="w-full text-sm sm:text-base bg-transparent text-slate-900 placeholder:text-slate-400 focus:outline-none py-2 pr-3 disabled:opacity-50"
-                  aria-label="Disease name input"
+                  placeholder="Enter a disease name"
+                  className="min-w-0 flex-1 bg-transparent py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 sm:text-base"
+                  aria-invalid={Boolean(validationError)}
+                  aria-describedby={validationError ? 'disease-search-error' : 'disease-search-help'}
                 />
-                {query && !isLoading && (
+                {query && (
                   <button
                     type="button"
-                    onClick={() => setQuery('')}
-                    className="text-xs text-slate-500 hover:text-slate-700 px-2 py-1 mr-1"
-                    aria-label="Clear search input"
+                    onClick={() => {
+                      setQuery('');
+                      setValidationError(null);
+                    }}
+                    className="rounded px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                    aria-label="Clear disease name"
                   >
                     Clear
                   </button>
                 )}
               </div>
-
               <button
                 type="submit"
-                disabled={isLoading}
-                className="inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-lg text-sm font-semibold text-white bg-brand-700 hover:bg-brand-800 active:bg-brand-900 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed transition-all shadow-xs"
+                disabled={submittingSameQuery}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-teal-800 px-5 py-2.5 text-sm font-semibold text-white hover:bg-teal-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-700 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-70 sm:min-w-44"
               >
-                {isLoading ? (
+                {submittingSameQuery ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin text-white" aria-hidden="true" />
-                    <span>Analyzing...</span>
+                    <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    <span>Waiting for API</span>
                   </>
                 ) : (
                   <>
-                    <Sparkles className="w-4 h-4 text-brand-200" aria-hidden="true" />
-                    <span>Search Candidates</span>
+                    <span>{isLoading ? 'Analyze new query' : 'Analyze disease'}</span>
+                    <ArrowRight className="h-4 w-4" aria-hidden="true" />
                   </>
                 )}
               </button>
             </div>
-
+            <p id="disease-search-help" className="mt-2 text-xs text-slate-500">
+              Queries are sent to the configured PharmaSure backend. A graph candidate is a hypothesis—not evidence of treatment efficacy.
+            </p>
             {validationError && (
-              <p className="mt-2 text-xs text-rose-600 flex items-center justify-center gap-1 font-medium">
-                <AlertCircle className="w-3.5 h-3.5" />
-                <span>{validationError}</span>
+              <p id="disease-search-error" className="mt-2 flex items-center gap-1.5 text-xs font-medium text-rose-700" role="alert">
+                <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                {validationError}
               </p>
             )}
           </form>
 
-          {/* Example Queries */}
-          <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-xs">
-            <span className="text-slate-600 font-medium mr-1">Examples:</span>
-            {PRIMARY_EXAMPLES.map((example) => (
-              <button
-                key={example}
-                type="button"
-                onClick={() => handleExampleClick(example)}
-                disabled={isLoading}
-                className="px-2.5 py-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium transition-colors border border-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-50"
-              >
-                {example}
-              </button>
-            ))}
-            <span className="text-slate-400">|</span>
-            {SECONDARY_EXAMPLES.map((example) => (
-              <button
-                key={example}
-                type="button"
-                onClick={() => handleExampleClick(example)}
-                disabled={isLoading}
-                className="px-2.5 py-1 rounded-md bg-white hover:bg-slate-50 text-slate-600 font-normal transition-colors border border-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-50"
-              >
-                {example}
-              </button>
-            ))}
-          </div>
+          {examples.length > 0 && (
+            <div className="mt-4 flex flex-wrap items-center gap-2" aria-label="Backend-supported disease examples">
+              <span className="mr-1 text-xs font-medium text-slate-500">Examples from backend:</span>
+              {examples.slice(0, 5).map((example) => (
+                <button
+                  key={example}
+                  type="button"
+                  onClick={() => submitQuery(example)}
+                  disabled={isLoading && example.trim().toLowerCase() === activeQuery.trim().toLowerCase()}
+                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:border-teal-700 hover:text-teal-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-700 disabled:opacity-60"
+                >
+                  {example}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </section>
