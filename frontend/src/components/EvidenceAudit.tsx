@@ -101,8 +101,8 @@ export const EvidenceAuditPanel: React.FC<EvidenceAuditProps> = ({ audit, onOpen
   const isAuditable = status === 'complete' || status === 'partial';
 
   const conflict = Boolean(counts.conflicting_evidence_present);
-  const classified = counts.classified ?? 0;
-  const units = counts.study_units ?? counts.eligible_independent_studies ?? 0;
+  const classified = counts.classified;
+  const units = counts.study_units ?? counts.eligible_independent_studies;
 
   return (
     <div className="border-t border-slate-100 bg-slate-50/60">
@@ -129,12 +129,16 @@ export const EvidenceAuditPanel: React.FC<EvidenceAuditProps> = ({ audit, onOpen
         <span className="flex items-center gap-3 text-[11px] text-slate-500 font-normal">
           {isAuditable && (
             <>
-              <span>
-                {units} study {units === 1 ? 'unit' : 'units'}
-              </span>
-              <span className="hidden sm:inline">
-                {classified} direction-classified
-              </span>
+              {units !== undefined && (
+                <span>
+                  {units} study {units === 1 ? 'unit' : 'units'}
+                </span>
+              )}
+              {classified !== undefined && (
+                <span className="hidden sm:inline">
+                  {classified} direction-classified
+                </span>
+              )}
               {conflict && (
                 <span className="inline-flex items-center gap-1 text-amber-800 font-medium">
                   <AlertTriangle className="w-3 h-3" />
@@ -187,10 +191,10 @@ export const EvidenceAuditPanel: React.FC<EvidenceAuditProps> = ({ audit, onOpen
                   Evidence rank
                 </span>
                 <span className="font-mono font-medium text-slate-800">
-                  #{baseline.evidence_rank}
+                  {baseline.evidence_rank == null ? 'Not reported' : `#${baseline.evidence_rank}`}
                 </span>
                 <span className="block text-[10px] text-slate-400">
-                  displayed rank #{baseline.displayed_kg_rank}
+                  {baseline.displayed_kg_rank == null ? 'KG rank not reported' : `displayed rank #${baseline.displayed_kg_rank}`}
                 </span>
               </div>
               <div className="p-2 bg-slate-50 rounded border border-slate-200">
@@ -230,7 +234,7 @@ export const EvidenceAuditPanel: React.FC<EvidenceAuditProps> = ({ audit, onOpen
                     className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] font-medium ${DIRECTION_TONE[label]}`}
                   >
                     <span>{DIRECTION_LABEL[label]}:</span>
-                    <span className="font-mono">{counts[label] ?? 0}</span>
+                    <span className="font-mono">{counts[label] ?? '—'}</span>
                   </span>
                 )
               )}
@@ -281,13 +285,15 @@ export const EvidenceAuditPanel: React.FC<EvidenceAuditProps> = ({ audit, onOpen
                       const scoreDown = (cf.score_delta ?? 0) > 0;
                       const rankDown = (cf.rank_delta ?? 0) > 0;
                       const failed = cf.status !== 'ok';
+                      const passageIds = cf.passage_ids || [];
+                      const pmids = cf.pmids || [];
                       return (
                         <tr
                           key={cf.study_group_id}
                           className="border-b border-slate-100 last:border-0 align-top"
                         >
                           <td className="py-1.5 pr-2 font-mono text-slate-700">
-                            {(cf.pmids || []).length ? cf.pmids.join(', ') : '(no PMID)'}
+                            {(cf.pmids || []).length ? (cf.pmids || []).join(', ') : '(no PMID)'}
                           </td>
                           <td className="py-1.5 pr-2 text-slate-600">
                             {cf.publication_year ?? '—'}
@@ -340,14 +346,14 @@ export const EvidenceAuditPanel: React.FC<EvidenceAuditProps> = ({ audit, onOpen
                             {failed ? '—' : signedInt(cf.rank_delta)}
                           </td>
                           <td className="py-1.5 pr-2">
-                            {cf.passage_ids?.length ? (
+                            {passageIds.length > 0 ? (
                               <button
                                 type="button"
-                                onClick={() => onOpenCitation(cf.passage_ids[0])}
+                                onClick={() => onOpenCitation(passageIds[0])}
                                 className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded font-mono text-[10px] font-semibold text-brand-700 bg-brand-50 border border-brand-300 hover:bg-brand-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-                                aria-label={`Open source passage ${cf.passage_ids[0]} for study ${cf.pmids.join(', ') || 'without PMID'}`}
+                                aria-label={`Open source passage ${passageIds[0]} for study ${pmids.join(', ') || 'without PMID'}`}
                               >
-                                [{cf.passage_ids[0]}]
+                                [{passageIds[0]}]
                               </button>
                             ) : (
                               <MinusCircle className="w-3 h-3 text-slate-300" aria-hidden="true" />
