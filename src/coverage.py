@@ -33,7 +33,7 @@ CORPUS_SCHEMA_VERSION = "2026-10-corpus-v2"
 #: vocabulary of an /api/query or /api/health response changes, so cached
 #: responses built against an older contract are not served as current. Kept
 #: separate from the corpus version because the two change independently.
-RESPONSE_CONTRACT_VERSION = "2026-10-response-v2"
+RESPONSE_CONTRACT_VERSION = "2026-10-response-v3"
 
 #: Where a response's evidence came from.
 EVIDENCE_SCOPE_LOCAL = "local_corpus"

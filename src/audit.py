@@ -731,6 +731,7 @@ def audit_candidate(
                 baseline_rank=baseline_rank,
                 ledger=ledger,
                 groups=groups,
+                input_record_count=len(drug_passages),
             )
 
         missing_pmid_groups = [g["study_group_id"] for g in groups if not g["has_valid_pmid"]]
@@ -763,6 +764,7 @@ def audit_candidate(
                 baseline_rank=baseline_rank,
                 ledger=ledger,
                 groups=groups,
+                input_record_count=len(drug_passages),
             )
 
         counterfactuals, cf_warnings = leave_one_study_out(
@@ -803,7 +805,16 @@ def audit_candidate(
                 "eligible_independent_studies": len(groups),
                 "study_units": len(groups),
                 "source_records": len(ledger),
+                # Retrieved passage records that collapsed onto a source already in
+                # the ledger. Reported so the count of records is not mistaken for a
+                # count of independent studies.
+                "duplicate_records_removed": max(0, len(drug_passages) - len(ledger)),
                 "study_independence_verified": False,
+                # NOTE: `potentially_overlapping_studies` is deliberately NOT
+                # reported. Cross-publication overlap cannot be established from the
+                # metadata this corpus carries, and a number here would be a claim we
+                # cannot support. Consumers should render it as not established, not
+                # as zero.
                 **summarize_directions(groups),
             },
             "stability": stability,
@@ -820,11 +831,14 @@ def audit_candidate(
             baseline_rank=baseline_rank,
             ledger=[],
             groups=[],
+            input_record_count=len(drug_passages),
         )
 
 
-def _empty_audit(*, status, reason, warnings, baseline, baseline_rank, ledger, groups) -> dict:
+def _empty_audit(*, status, reason, warnings, baseline, baseline_rank, ledger, groups,
+                 input_record_count: Optional[int] = None) -> dict:
     """Shared shape for audits that could not be completed."""
+    records_in = len(ledger) if input_record_count is None else input_record_count
     return {
         "version": AUDIT_VERSION,
         "method": AUDIT_METHOD,
@@ -844,6 +858,7 @@ def _empty_audit(*, status, reason, warnings, baseline, baseline_rank, ledger, g
             "eligible_independent_studies": len(groups),
             "study_units": len(groups),
             "source_records": len(ledger),
+            "duplicate_records_removed": max(0, records_in - len(ledger)),
             "study_independence_verified": False,
             **summarize_directions(groups),
         },
