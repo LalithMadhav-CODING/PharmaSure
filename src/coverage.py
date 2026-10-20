@@ -29,6 +29,12 @@ _DATA = os.path.join(_ROOT, "data")
 #: can be recognised as belonging to an older evidence set.
 CORPUS_SCHEMA_VERSION = "2026-10-corpus-v2"
 
+#: Version of the *response payload contract*. Bumped when the shape or
+#: vocabulary of an /api/query or /api/health response changes, so cached
+#: responses built against an older contract are not served as current. Kept
+#: separate from the corpus version because the two change independently.
+RESPONSE_CONTRACT_VERSION = "2026-10-response-v2"
+
 #: Where a response's evidence came from.
 EVIDENCE_SCOPE_LOCAL = "local_corpus"
 EVIDENCE_SCOPE_LIVE = "live_retrieval"

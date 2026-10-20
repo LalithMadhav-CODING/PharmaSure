@@ -54,9 +54,42 @@ def save_index(index: np.ndarray, passages: list[dict], index_path: str = "data/
         json.dump(passages, f)
 
 
-def save_demo_cache(cache: dict, cache_path: str = "data/demo_cache.json"):
-    """Save precomputed demo results to disk."""
+def save_demo_cache(cache: dict, cache_path: str = "data/demo_cache.json",
+                    *, allow_shrink: bool = False):
+    """Save precomputed demo results to disk.
+
+    Every entry is stamped with the response contract version it was produced
+    under. Stamping here rather than at each return path means no response shape
+    can reach the cache unstamped, so a later contract change invalidates stale
+    entries instead of leaving the frontend reading fields that are gone.
+
+    Refuses to silently DROP entries that already exist on disk. Overwriting the
+    shipped demo cache with a smaller one is almost always an accident (a test
+    calling this without a path, or a partial rebuild), and the loss is silent —
+    the app just gets slower and returns uncached results. Pass
+    ``allow_shrink=True`` when a reduction is genuinely intended.
+    """
     global _demo_cache
+
+    if not allow_shrink and os.path.exists(cache_path):
+        try:
+            with open(cache_path) as f:
+                existing = json.load(f) or {}
+        except (OSError, ValueError):
+            existing = {}
+        if isinstance(existing, dict):
+            lost = set(existing) - set(cache)
+            if lost:
+                raise ValueError(
+                    f"refusing to drop {len(lost)} existing demo cache entry/entries "
+                    f"({sorted(lost)[:3]}). Pass allow_shrink=True if intended."
+                )
+
+    cache = {
+        key: ({**value, "response_contract_version": coverage.RESPONSE_CONTRACT_VERSION}
+              if isinstance(value, dict) else value)
+        for key, value in cache.items()
+    }
     _demo_cache = cache
     import numpy as np
 
@@ -79,6 +112,102 @@ def load_demo_cache(cache_path: str = "data/demo_cache.json") -> dict:
         with open(cache_path) as f:
             _demo_cache = json.load(f)
     return _demo_cache or {}
+
+
+def _distinct_pmid_count(passages: list) -> int:
+    return len({str(p.get("pmid")) for p in passages if p.get("pmid")})
+
+
+def _live_retrieval_status(live_outcome) -> str:
+    """Map a live-retrieval outcome onto the status vocabulary the frontend reads.
+
+    The frontend treats 'rate_limited', 'timeout', 'unavailable' and 'failed' as
+    retrieval errors (amber styling), and everything else as a normal state. A
+    provider outage must land in the error set so it is visibly not a clean
+    negative result.
+    """
+    if live_outcome is None:
+        return "not_attempted"
+    if live_outcome.status == live_retrieval.LIVE_STATUS_FAILED:
+        kind = (live_outcome.error or {}).get("kind")
+        if kind == "timeout":
+            return "timeout"
+        if kind == "rate_limited":
+            return "rate_limited"
+        return "unavailable"
+    return live_outcome.status
+
+
+def _build_coverage(disease: dict, candidates: list, live_outcome, top_passages: list,
+                    evidence_scope: str, local_passage_count: int,
+                    graph_status: str = "available") -> dict:
+    """Assemble the coverage block.
+
+    Emits the semantic vocabulary the frontend reads (disease_resolution_status,
+    graph_candidate_status, literature_status, source_mode, provider,
+    retrieval_status, retrieved_record_count, distinct_pmid_count, retrieved_at,
+    provider_message) alongside the original count fields, which are retained so
+    existing consumers keep working. Purely additive.
+
+    Every value here is derived from data the backend already holds; nothing is
+    invented. Absent facts stay null rather than being filled with a plausible
+    guess.
+    """
+    live = live_outcome
+
+    if evidence_scope == coverage.EVIDENCE_SCOPE_LOCAL:
+        literature_status = "available"
+        source_mode = "local"
+    elif evidence_scope == coverage.EVIDENCE_SCOPE_LIVE:
+        literature_status = "available"
+        source_mode = "live"
+    else:
+        # No candidate-specific evidence was produced. Distinguish "provider
+        # never answered" from "provider answered and there is nothing".
+        if live is not None and live.status == live_retrieval.LIVE_STATUS_FAILED:
+            literature_status = "unavailable"
+        else:
+            literature_status = "none"
+        source_mode = "unknown"
+
+    provider_message = None
+    if live is not None:
+        if live.status == live_retrieval.LIVE_STATUS_FAILED and live.error:
+            # The provider's own error text only — never a stack trace or an
+            # internal exception repr.
+            provider_message = live.error.get("message")
+        elif live.status in (live_retrieval.LIVE_STATUS_NO_RESULTS,
+                             live_retrieval.LIVE_STATUS_NO_RELEVANT):
+            provider_message = "; ".join(live.limitations) or None
+
+    if live is not None:
+        retrieved_record_count = live.records_after_dedup
+        distinct_pmid_count = None
+        retrieved_at = live.retrieved_at
+        provider = live.provider
+    else:
+        retrieved_record_count = len(top_passages)
+        distinct_pmid_count = _distinct_pmid_count(top_passages)
+        retrieved_at = None
+        provider = None
+
+    return {
+        # --- semantic vocabulary read by the frontend ---
+        "disease_resolution_status": "resolved",
+        "graph_candidate_status": graph_status,
+        "literature_status": literature_status,
+        "source_mode": source_mode,
+        "provider": provider,
+        "retrieval_status": _live_retrieval_status(live),
+        "retrieved_record_count": retrieved_record_count,
+        "distinct_pmid_count": distinct_pmid_count,
+        "retrieved_at": retrieved_at,
+        "provider_message": provider_message,
+        # --- original count fields, retained for compatibility ---
+        "local_passage_count": local_passage_count,
+        "local_literature_available": local_passage_count > 0,
+        "retrieved_passage_count": len(top_passages),
+    }
 
 
 def _abstention_response(disease: dict, candidates: list, known_indications: list,
@@ -106,10 +235,10 @@ def _abstention_response(disease: dict, candidates: list, known_indications: lis
         "candidate_pool": pool,
         "known_indications": known_indications,
         "passages": [],
-        "coverage": {
-            "local_passage_count": 0,
-            "local_literature_available": False,
-        },
+        "coverage": _build_coverage(
+            disease, candidates, live_outcome, [],
+            coverage.EVIDENCE_SCOPE_NONE, 0, graph_status="available",
+        ),
         "timings_ms": timings,
         "from_cache": False,
         "corpus_schema_version": coverage.CORPUS_SCHEMA_VERSION,
@@ -195,6 +324,14 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
         if cached_version and cached_version != coverage.CORPUS_SCHEMA_VERSION:
             hit_key = None
 
+    # A cached entry built against an older *response contract* must not be served
+    # either: the corpus is unchanged but the payload shape is not, so a stale
+    # entry would leave the frontend reading fields that are no longer emitted.
+    if hit_key:
+        cached_contract = (cache[hit_key] or {}).get("response_contract_version")
+        if cached_contract != coverage.RESPONSE_CONTRACT_VERSION:
+            hit_key = None
+
     if hit_key:
         result = cache[hit_key].copy()
         result["from_cache"] = True
@@ -252,7 +389,27 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
             "results": [],
             "known_indications": [],
             "passages": [],
+            "coverage": {
+                # The disease never resolved, so nothing downstream was assessed.
+                # Reported explicitly rather than left absent, so the frontend can
+                # say "not assessed" instead of inferring a false negative.
+                "disease_resolution_status": "unresolved",
+                "graph_candidate_status": "unavailable",
+                "literature_status": "unknown",
+                "source_mode": "unknown",
+                "provider": None,
+                "retrieval_status": "not_attempted",
+                "retrieved_record_count": 0,
+                "distinct_pmid_count": 0,
+                "retrieved_at": None,
+                "provider_message": None,
+                "local_passage_count": 0,
+                "local_literature_available": False,
+                "retrieved_passage_count": 0,
+            },
             "timings_ms": timings,
+            "from_cache": False,
+            "corpus_schema_version": coverage.CORPUS_SCHEMA_VERSION,
         }
 
     # Step 2: Get candidates from KG
@@ -279,6 +436,10 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
             "candidate_pool": [],
             "known_indications": known_indications,
             "passages": [],
+            "coverage": _build_coverage(
+                disease, [], None, [],
+                coverage.EVIDENCE_SCOPE_NONE, 0, graph_status="none",
+            ),
             "timings_ms": timings,
             "from_cache": False,
             "corpus_schema_version": coverage.CORPUS_SCHEMA_VERSION,
@@ -378,6 +539,25 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
         reranked = retrieval.rerank(retrieved, scores)
         top_passages = reranked[:10]
         timings["rerank_ms"] = int((time.time() - t0) * 1000)
+
+    # Passage contract expected by the frontend. Additive.
+    #
+    # `source_url` is derived from the PMID only when a PMID genuinely exists — a
+    # deterministic URL for a real identifier, not a fabricated link. `title` is
+    # left null for corpus passages because the indexed corpus stores no separate
+    # title field; inventing one would be fabrication.
+    for p in top_passages:
+        if not p.get("provenance"):
+            p["provenance"] = p.get("source_mode") or "local_corpus"
+        if not p.get("source_url"):
+            if p.get("url"):
+                p["source_url"] = p["url"]
+            elif p.get("pmid"):
+                p["source_url"] = f"https://pubmed.ncbi.nlm.nih.gov/{p['pmid']}/"
+            else:
+                p["source_url"] = None
+        if "title" not in p:
+            p["title"] = None
 
     # Step 5: Generate answer (single Gemini call)
     t0 = time.time()
@@ -479,14 +659,39 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
             "limitations": limitations,
         }
 
+        # Contract expected by the frontend's coverage panel. Additive: the
+        # evidence_summary block above is retained unchanged.
+        if verified_claims > 0 and review_claims == 0:
+            verification_status = "verified"
+        elif claims:
+            verification_status = "needs_review"
+        else:
+            verification_status = "not_assessed"
+
+        if evidence_status == "supported":
+            coverage_status = "available"
+        elif evidence_status == "no_candidate_specific_evidence":
+            coverage_status = "none"
+        else:
+            coverage_status = "insufficient"
+
+        literature_coverage = {
+            "status": coverage_status,
+            "source_record_count": len(drug_passages),
+            "distinct_pmid_count": len(distinct_pmids),
+            "verification_status": verification_status,
+        }
+
         results.append({
             "rank": i + 1,
             "drug": drug_name,
+            "kg_score": kg_cand.get("score"),
             "direction": llm_cand.get("direction", "Uncertain"),
             "evidence": score_info,
             "reason": reason,
             "claims": claims,
             "evidence_summary": evidence_summary,
+            "literature_coverage": literature_coverage,
         })
 
     # Step 8: Citation-level counterfactual evidence audit (additive).
@@ -507,19 +712,32 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
     timings["audit_ms"] = int((time.time() - t0) * 1000)
 
     total_ms = sum(timings.values())
+    if evidence_scope == coverage.EVIDENCE_SCOPE_LIVE:
+        live_provider = live_outcome.provider if live_outcome is not None else "the live provider"
+        message = (
+            f"No indexed local literature exists for '{disease['name']}'; evidence "
+            f"was retrieved live from {live_provider} and bound to specific "
+            f"graph candidates. Live records are not part of the indexed corpus."
+        )
+    else:
+        message = (
+            f"Answered from the indexed local corpus "
+            f"({local_passage_count} passage(s) for this disease)."
+        )
+
     response = {
         "status": "ok",
         "query": query,
+        "message": message,
         "disease": disease,
         "results": results,
         "known_indications": known_indications,
         "passages": top_passages,
         "evidence_scope": evidence_scope,
-        "coverage": {
-            "local_passage_count": local_passage_count,
-            "local_literature_available": local_passage_count > 0,
-            "retrieved_passage_count": len(top_passages),
-        },
+        "coverage": _build_coverage(
+            disease, candidates, live_outcome, top_passages,
+            evidence_scope, local_passage_count,
+        ),
         "evidence_audit_summary": {
             "version": audit.AUDIT_VERSION,
             "method": audit.AUDIT_METHOD,

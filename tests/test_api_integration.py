@@ -342,6 +342,7 @@ def test_audit_does_not_claim_clinical_validity():
 def test_legacy_cached_response_without_audit_does_not_crash():
     """A cache entry predating the audit must degrade explicitly, not error."""
     import src.pipeline as pipeline
+    from src import coverage
 
     saved = pipeline._demo_cache
     try:
@@ -357,6 +358,9 @@ def test_legacy_cached_response_without_audit_does_not_crash():
                 "known_indications": [],
                 "passages": [],
                 "timings_ms": {},
+                # A current-contract entry that predates the audit field. This is
+                # what the test is about: the audit is missing, not the contract.
+                "response_contract_version": coverage.RESPONSE_CONTRACT_VERSION,
             }
         }
         out = pipeline.run_pipeline("legacy test disease")
