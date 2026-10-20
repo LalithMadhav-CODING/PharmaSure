@@ -239,6 +239,9 @@ def test_health_reports_live_retrieval_readiness():
     data = client.get("/api/health").json()
     assert "live_retrieval_enabled" in data
     assert data["live_retrieval_enabled"] is True
+    # The provider name must be reported too: knowing live retrieval is on without
+    # knowing which provider serves it is not enough to diagnose a result.
+    assert data.get("live_retrieval_provider") == "europepmc"
     # No secrets or provider credentials may appear in health output.
     text = json.dumps(data).lower()
     for secret in ("api_key", "apikey", "token", "password", "secret"):

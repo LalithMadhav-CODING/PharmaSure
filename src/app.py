@@ -252,6 +252,7 @@ def create_app() -> FastAPI:
             # Not every resolvable disease has local evidence, so this is False.
             "all_diseases_supported": False,
             "live_retrieval_enabled": cov["live_retrieval_enabled"],
+            "live_retrieval_provider": cov["live_retrieval_provider"],
 
             "demo_supported_diseases": pipeline.get_supported_diseases_list(),
             "supported_diseases": pipeline.get_supported_diseases_list(),
