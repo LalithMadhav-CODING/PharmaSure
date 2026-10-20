@@ -117,7 +117,51 @@ All displayed outcomes must be computed results for the declared protocol. Do no
 
 ## Configuration and running locally
 
+- **Node version: the build requires Node >= 20.12.** `vite@8`/`rolldown` imports
+  `styleText` from `node:util`, which does not exist before Node 20.12. The system
+  `node` on this host is `/usr/bin/node` v18.19.1 and fails with a misleading
+  `SyntaxError: The requested module 'node:util' does not provide an export named
+  'styleText'`. Use the nvm default instead:
+
+  ```bash
+  export PATH="$HOME/.nvm/versions/node/v24.20.0/bin:$PATH"
+  node -v   # must be >= 20.12
+  ```
+
 - Frontend dev server: `cd frontend && npm ci && npm run dev`.
+- Frontend production build: `cd frontend && npm run build` (`tsc && vite build`).
+  Verified deterministic for a fixed Node version.
+- `frontend/dist/` is committed because the deployment serves it; rebuild and
+  commit it after any frontend change so the served bundle matches the source.
 - Vite proxies browser-relative `/api/*` and `/gradio/*` routes to `http://127.0.0.1:7860` by default. Set `VITE_DEV_PROXY_TARGET` (or `BACKEND_API_URL` for the local Vite process) to change that dev-server target.
 - The browser API base can be configured by runtime `frontend/public/config.json` (`apiBase`) or the build-time `VITE_API_BASE_URL`; empty means same-origin. Do not put backend keys in either frontend setting.
-- Backend: start the existing FastAPI application using its documented environment and data; no backend code was changed for this UI work.
+- Backend: start the existing FastAPI application using its documented environment and data.
+
+## Backend response contract (as reconciled in Phase D)
+
+The frontend reads a coverage vocabulary the backend must emit. See
+`tests/test_contract_integration.py`, which pins every key by reading it from the
+frontend's own mappers.
+
+`coverage` carries: `disease_resolution_status` (`resolved`/`unresolved`),
+`graph_candidate_status` (`available`/`none`/`unavailable`), `literature_status`
+(`available`/`none`/`insufficient`/`unavailable`/`unknown`), `source_mode`
+(`local`/`live`/`mixed`/`unknown`), `provider`, `retrieval_status`,
+`retrieved_record_count`, `distinct_pmid_count`, `retrieved_at`,
+`provider_message`. The original count fields
+(`local_passage_count`, `local_literature_available`, `retrieved_passage_count`)
+are retained for compatibility.
+
+Each candidate carries `kg_score` and `literature_coverage`
+(`status`/`source_record_count`/`distinct_pmid_count`/`verification_status`)
+alongside the original `evidence_summary`. Each passage carries `title`,
+`source_url` and `provenance` alongside the original fields.
+
+`retrieval_status` uses the frontend's error set (`timeout`, `rate_limited`,
+`unavailable`, `failed`) for provider failures, so an outage is visibly an error
+rather than a clean negative result.
+
+`RESPONSE_CONTRACT_VERSION` (`src/coverage.py`) is stamped on cached responses and
+checked on read. **Bump it whenever the response shape or vocabulary changes** —
+otherwise the cache keeps serving payloads in the old shape, which is exactly the
+failure mode it exists to prevent.
