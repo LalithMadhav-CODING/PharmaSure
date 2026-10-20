@@ -287,10 +287,33 @@ def test_baseline_components_are_preserved():
     assert set(got["breakdown"]) >= {
         "relevance", "relevance_weight", "support", "support_weight",
         "study_quality", "study_quality_weight",
+        "verification", "verification_role",
     }
-    assert got["breakdown"]["relevance_weight"] == 0.25
+    assert got["breakdown"]["relevance_weight"] == 0.35
     assert got["breakdown"]["support_weight"] == 0.35
-    assert got["breakdown"]["study_quality_weight"] == 0.40
+    assert got["breakdown"]["study_quality_weight"] == 0.30
+    # Verification multiplies the strength terms rather than adding to them.
+    assert got["breakdown"]["verification_role"] == "multiplier"
+
+
+def test_verification_gates_the_score():
+    """A candidate whose quotations do not verify cannot outscore one that does.
+
+    This is the property the multiplier exists to guarantee: no amount of
+    favourable publication metadata can lift a candidate with zero verified
+    quotations above a fully-verified one.
+    """
+    passages = three_study_set()
+
+    unverified = audit.score_passages(passages, "DrugA", verified_claims=0, total_claims=2)
+    verified = audit.score_passages(passages, "DrugA", verified_claims=2, total_claims=2)
+    half = audit.score_passages(passages, "DrugA", verified_claims=1, total_claims=2)
+
+    assert unverified["score"] == 0.0
+    assert 0.0 < half["score"] < verified["score"]
+    # Identical passages, so the only difference is verification.
+    assert (unverified["breakdown"]["evidence_strength"]
+            == verified["breakdown"]["evidence_strength"])
 
 
 def test_empty_evidence_scores_zero_with_a_stable_shape():
@@ -496,11 +519,11 @@ def test_a_failed_scenario_does_not_erase_successful_ones(monkeypatch):
     passages = three_study_set()
     real = audit.score_passages
 
-    def flaky(p, drug):
+    def flaky(p, drug, **kwargs):
         # Fail only the scenario that removes pmid 22222222 (leaving pids 1 and 3).
         if sorted(x["id"] for x in p) == [1, 3]:
             raise RuntimeError("boom")
-        return real(p, drug)
+        return real(p, drug, **kwargs)
 
     monkeypatch.setattr(audit, "score_passages", flaky)
     result = run_audit(passages)

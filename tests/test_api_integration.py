@@ -260,12 +260,23 @@ def test_audit_preserves_the_baseline_score_exactly():
 
 
 def test_audit_rank_is_distinct_from_the_displayed_rank():
+    """The displayed rank is now the EVIDENCE rank; the graph rank is kept separate.
+
+    These were the same number before candidates were ranked by evidence score, so
+    the invariant moved: `rank` now equals the audit's evidence_rank, while the
+    knowledge-graph origin is preserved as displayed_kg_rank and must not be
+    conflated with it.
+    """
     data = _ok_payload()
     for c in data["results"]:
         audit = c["evidence_audit"]
-        assert audit["baseline"]["displayed_kg_rank"] == c["rank"]
-        assert "evidence_rank" in audit["baseline"]
+        assert audit["baseline"]["evidence_rank"] == c["rank"]
+        # The graph origin is still reported, and is the pre-sort position.
+        assert audit["baseline"]["displayed_kg_rank"] == c["evidence_summary"]["graph_rank"]
         assert audit["ranking_scope"] == "evidence_rank_over_retrieved_candidates"
+    # Ordering is by score, descending.
+    scores = [c["evidence"]["score"] for c in data["results"]]
+    assert scores == sorted(scores, reverse=True)
 
 
 def test_audit_does_not_change_the_existing_candidate_contract():
@@ -275,17 +286,23 @@ def test_audit_does_not_change_the_existing_candidate_contract():
 
 
 def test_audit_does_not_change_existing_evidence_scores():
-    """The audit must be additive: scoring behaviour is untouched."""
+    """The audit must be additive: the score is exactly what the scorer returns.
+
+    Recomputes from the published breakdown using the current formula, so a
+    scorer change that was not reflected in the breakdown would be caught.
+    """
     data = _ok_payload()
     for c in data["results"]:
         breakdown = c["evidence"].get("breakdown")
         assert breakdown is not None
-        recomputed = (
-            0.25 * breakdown["relevance"]
-            + 0.35 * breakdown["support"]
-            + 0.40 * breakdown["study_quality"]
+        strength = (
+            breakdown["relevance_weight"] * breakdown["relevance"]
+            + breakdown["support_weight"] * breakdown["support"]
+            + breakdown["study_quality_weight"] * breakdown["study_quality"]
         )
+        recomputed = breakdown["verification"] * strength
         assert c["evidence"]["score"] == pytest.approx(recomputed, abs=0.002)
+        assert breakdown["verification_role"] == "multiplier"
 
 
 def test_audit_counterfactual_deltas_are_consistent():
@@ -342,7 +359,7 @@ def test_audit_does_not_claim_clinical_validity():
 def test_legacy_cached_response_without_audit_does_not_crash():
     """A cache entry predating the audit must degrade explicitly, not error."""
     import src.pipeline as pipeline
-    from src import coverage
+    from src import coverage, audit
 
     saved = pipeline._demo_cache
     try:
@@ -361,6 +378,7 @@ def test_legacy_cached_response_without_audit_does_not_crash():
                 # A current-contract entry that predates the audit field. This is
                 # what the test is about: the audit is missing, not the contract.
                 "response_contract_version": coverage.RESPONSE_CONTRACT_VERSION,
+                "scoring_function": audit.SCORING_FUNCTION_ID,
             }
         }
         out = pipeline.run_pipeline("legacy test disease")
@@ -389,7 +407,7 @@ def test_audit_failure_does_not_remove_candidates(monkeypatch):
     try:
         pipeline._demo_cache = {}
         out = pipeline.run_pipeline("Asthma")
-        baseline = [(c["drug"], c["evidence"]["score"]) for c in out["results"]]
+        baseline = [c["drug"] for c in out["results"]]
         assert baseline, "expected candidate results before breaking the audit"
 
         def explode(*a, **k):
@@ -398,8 +416,19 @@ def test_audit_failure_does_not_remove_candidates(monkeypatch):
         monkeypatch.setattr(audit_mod, "attach_audits", explode)
         broken = pipeline.run_pipeline("Asthma")
 
+        # The audit is additive: the same candidates must still be returned with
+        # usable scores, and the failure must be reported rather than swallowed.
+        #
+        # Candidate SET is the invariant, not exact score equality. Scores now depend
+        # on verification, which depends on generated claims, so two live runs are
+        # only comparable because generation is greedy — but set-and-range is the
+        # property this test is actually about (a broken audit must not drop or zero
+        # candidates).
         assert broken["status"] == "ok"
-        assert [(c["drug"], c["evidence"]["score"]) for c in broken["results"]] == baseline
+        assert [c["drug"] for c in broken["results"]] == baseline
+        assert len(broken["results"]) == len(baseline)
+        for c in broken["results"]:
+            assert 0.0 <= c["evidence"]["score"] <= 1.0
         assert broken["evidence_audit_summary"]["status"].startswith("failed")
     finally:
         pipeline._demo_cache = saved

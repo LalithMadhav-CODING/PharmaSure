@@ -332,6 +332,14 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
         if cached_contract != coverage.RESPONSE_CONTRACT_VERSION:
             hit_key = None
 
+    # A cached entry whose scores were produced by a DIFFERENT scoring function must
+    # not be served. The corpus and the payload shape can both be unchanged while
+    # the numbers are not, so neither version above catches a re-weighted scorer.
+    if hit_key:
+        cached_scorer = (cache[hit_key] or {}).get("scoring_function")
+        if cached_scorer != audit.SCORING_FUNCTION_ID:
+            hit_key = None
+
     if hit_key:
         result = cache[hit_key].copy()
         result["from_cache"] = True
@@ -594,9 +602,27 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
             p for p in top_passages
             if drug_name.lower() in (p.get("drug") or "").lower()
         ]
-        score_info = retrieval.evidence_score(drug_passages, drug_name) if drug_passages else {
+
+        # Claims are read BEFORE scoring: verification is a scored term now, so the
+        # score cannot be computed without it.
+        claims = llm_cand.get("claims", []) or []
+        verified_claims = sum(1 for c in claims if c.get("verification_status") == "verified")
+        review_claims = len(claims) - verified_claims
+
+        score_info = retrieval.evidence_score(
+            drug_passages, drug_name,
+            verified_claims=verified_claims, total_claims=len(claims),
+        ) if drug_passages else {
             "score": 0.0, "tier": "Preliminary", "support": 0, "best_study_type": "none",
-            "breakdown": {"relevance": 0.0, "relevance_weight": 0.25, "support": 0.0, "support_weight": 0.35, "study_quality": 0.0, "study_quality_weight": 0.40}
+            "verification": 0.0,
+            "breakdown": {
+                "verification": 0.0, "verification_role": "multiplier",
+                "verified_claims": verified_claims, "total_claims": len(claims),
+                "evidence_strength": 0.0,
+                "relevance": 0.0, "relevance_weight": 0.35,
+                "support": 0.0, "support_weight": 0.35,
+                "study_quality": 0.0, "study_quality_weight": 0.30,
+            },
         }
 
         reason = llm_cand.get("reason") or (
@@ -611,9 +637,6 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
         distinct_pmids = sorted({
             str(p.get("pmid")) for p in drug_passages if p.get("pmid")
         })
-        claims = llm_cand.get("claims", []) or []
-        verified_claims = sum(1 for c in claims if c.get("verification_status") == "verified")
-        review_claims = len(claims) - verified_claims
 
         if not drug_passages:
             evidence_status = "no_candidate_specific_evidence"
@@ -694,6 +717,22 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
             "literature_coverage": literature_coverage,
         })
 
+    # Step 7b: rank by evidence score.
+    #
+    # The displayed order is the EVIDENCE order, so a candidate whose quotations
+    # actually verified rises and one that scores only on publication metadata
+    # falls. The knowledge-graph origin is not lost: it stays in
+    # evidence_summary.graph_rank, and the audit still reports it separately as
+    # displayed_kg_rank. Ties break on the graph rank, then the drug name, so the
+    # ordering is fully deterministic.
+    results.sort(key=lambda c: (
+        -(c["evidence"].get("score") or 0.0),
+        c["evidence_summary"]["graph_rank"],
+        c["drug"].lower(),
+    ))
+    for position, candidate in enumerate(results, start=1):
+        candidate["rank"] = position
+
     # Step 8: Citation-level counterfactual evidence audit (additive).
     # Pure deterministic recomputation over the evidence already retrieved: no LLM
     # call and no re-embedding, so it cannot alter the baseline scores above.
@@ -748,6 +787,10 @@ def run_pipeline(query: str, index: np.ndarray = None, passages: list[dict] = No
         "timings_ms": {**timings, "total_ms": total_ms},
         "from_cache": False,
         "corpus_schema_version": coverage.CORPUS_SCHEMA_VERSION,
+        # Which scorer produced these numbers. Cached entries are checked against
+        # it, so re-weighting the scorer cannot serve stale scores.
+        "scoring_function": audit.SCORING_FUNCTION_ID,
+        "ranking_method": "evidence_score_desc",
     }
 
     if live_outcome is not None:

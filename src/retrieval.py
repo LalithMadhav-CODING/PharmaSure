@@ -45,14 +45,37 @@ def rerank(passages: list[dict], scores: list[float]) -> list[dict]:
     return passages
 
 
-def evidence_score(passages: list[dict], drug_name: str = "") -> dict:
+def evidence_score(passages: list[dict], drug_name: str = "",
+                   verified_claims: int = 0, total_claims: int = 0) -> dict:
     """Compute evidence score from passages relevant to a specific drug.
 
-    Formula: 0.25 * relevance + 0.35 * support + 0.40 * study_quality
-    Labeled as experimental heuristic, never clinical probability.
+    Formula:  verification x (0.35*relevance + 0.35*support + 0.30*study_quality)
+
+    Verification is a MULTIPLIER, not a term. A quotation that cannot be matched
+    back to its source is not usable evidence, so a candidate whose quotations do
+    not verify cannot outscore one whose quotations do — no matter how favourable
+    its publication metadata is. An additive term cannot guarantee that: a
+    clinical-trial publication type alone outweighed a 25% verification weight and
+    let a candidate with zero verified quotations rank above fully-verified ones.
+
+    ``verification`` is the fraction of this candidate's claims whose quotations
+    passed the contiguous-excerpt check. It is 0.0 when the candidate has no
+    claims, so "no verified claim" scores the same whether the model produced
+    nothing or produced text that failed verification. Scoring 0 here means "no
+    verified evidence", NOT "no evidence exists" and NOT "ineffective" — the
+    per-candidate evidence_status distinguishes those cases.
+
+    Labeled as an experimental heuristic, never a clinical probability.
     """
+    # Verification: share of this candidate's claims whose quotes verified.
+    # No claims means no verified claim, so this is 0.0 rather than excluded —
+    # excluding it would reward producing nothing.
+    verification = (verified_claims / total_claims) if total_claims else 0.0
+    verification = max(0.0, min(1.0, verification))
+
     if not passages:
-        return {"score": 0.0, "tier": "Preliminary", "support": 0, "best_study_type": "none"}
+        return {"score": 0.0, "tier": "Preliminary", "support": 0,
+                "best_study_type": "none", "verification": round(verification, 3)}
 
     # Filter passages for this specific drug (check drug field, not text)
     if drug_name:
@@ -61,7 +84,8 @@ def evidence_score(passages: list[dict], drug_name: str = "") -> dict:
         drug_passages = passages
 
     if not drug_passages:
-        return {"score": 0.0, "tier": "Preliminary", "support": 0, "best_study_type": "none"}
+        return {"score": 0.0, "tier": "Preliminary", "support": 0,
+                "best_study_type": "none", "verification": round(verification, 3)}
 
     # Relevance: mean retrieval score for THIS drug's passages (direct, not compressed)
     retrieval_scores = [p.get("retrieval_score", 0.0) for p in drug_passages]
@@ -81,7 +105,8 @@ def evidence_score(passages: list[dict], drug_name: str = "") -> dict:
             best_weight = study_weights[pt]
             best_study = pt
 
-    score = 0.25 * relevance + 0.35 * support + 0.40 * best_weight
+    evidence_strength = 0.35 * relevance + 0.35 * support + 0.30 * best_weight
+    score = verification * evidence_strength
 
     if score >= 0.7:
         tier = "Strong"
@@ -95,12 +120,18 @@ def evidence_score(passages: list[dict], drug_name: str = "") -> dict:
         "tier": tier,
         "support": support_count,
         "best_study_type": best_study,
+        "verification": round(verification, 3),
         "breakdown": {
+            "verification": round(verification, 3),
+            "verification_role": "multiplier",
+            "verified_claims": verified_claims,
+            "total_claims": total_claims,
+            "evidence_strength": round(evidence_strength, 3),
             "relevance": round(relevance, 3),
-            "relevance_weight": 0.25,
+            "relevance_weight": 0.35,
             "support": round(support, 3),
             "support_weight": 0.35,
             "study_quality": round(best_weight, 3),
-            "study_quality_weight": 0.40,
+            "study_quality_weight": 0.30,
         },
     }

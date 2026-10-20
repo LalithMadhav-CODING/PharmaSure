@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import src.pipeline as pipeline
-from src import coverage
+from src import coverage, audit
 from src.app import app
 
 client = TestClient(app)
@@ -274,6 +274,7 @@ def test_cache_hit_uses_canonical_identity():
         # Must carry the current response contract, or the entry is correctly
         # treated as stale and this stops testing canonical-identity matching.
         "response_contract_version": coverage.RESPONSE_CONTRACT_VERSION,
+        "scoring_function": audit.SCORING_FUNCTION_ID,
     }
     saved = _with_fake_cache("alzheimer disease", entry)
     try:

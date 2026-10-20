@@ -105,14 +105,47 @@ def test_pmid_sets_are_candidate_specific(result):
 # --------------------------------------------------------------------------- #
 
 def test_graph_rank_and_evidence_score_are_distinguishable(result):
+    """Candidates are ordered by evidence score; the graph origin is preserved.
+
+    These were the same number while the display used the graph order. Now `rank`
+    is the evidence rank, so the invariant to assert is that graph_rank still
+    records where the candidate came from in the knowledge graph and is NOT
+    silently overwritten by the sort.
+    """
     for c in result["results"]:
         es = c["evidence_summary"]
-        assert es["graph_rank"] == c["rank"]
-        assert "graph_score" in es
+        assert es["graph_rank"] >= 1
+        assert c["rank"] >= 1
         # The literature evidence score is a separate signal from the graph score.
         assert "score" in c["evidence"]
         if es["graph_score"] is not None:
             assert isinstance(es["graph_score"], (int, float))
+    # Every candidate carries a distinct graph rank, and the set is 1..n.
+    graph_ranks = sorted(c["evidence_summary"]["graph_rank"] for c in result["results"])
+    assert graph_ranks == list(range(1, len(result["results"]) + 1))
+    # Displayed order is score-descending.
+    scores = [c["evidence"]["score"] for c in result["results"]]
+    assert scores == sorted(scores, reverse=True)
+    # Ranks are a clean 1..n in display order.
+    assert [c["rank"] for c in result["results"]] == list(range(1, len(result["results"]) + 1))
+
+
+def test_verified_candidates_outrank_unverified_ones(result):
+    """The property the verification multiplier exists to guarantee."""
+    def v(c):
+        return (c["evidence"].get("breakdown") or {}).get("verification") or 0.0
+
+    verified = [c for c in result["results"] if v(c) > 0]
+    unverified = [c for c in result["results"] if v(c) == 0]
+    if verified and unverified:
+        assert max(c["rank"] for c in verified) < min(c["rank"] for c in unverified), (
+            "a candidate with no verified quotation must not outrank one with a "
+            "verified quotation"
+        )
+    # And scores agree with the ordering.
+    for a in verified:
+        for b in unverified:
+            assert a["evidence"]["score"] >= b["evidence"]["score"]
 
 
 def test_distinct_pmid_count_is_a_real_deduplication(result):

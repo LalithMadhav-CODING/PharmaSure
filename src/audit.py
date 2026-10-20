@@ -41,7 +41,7 @@ AUDIT_METHOD = "leave_one_independent_study_out"
 
 # Identifier for the scoring function the audit reuses. If that function's
 # formula or weights change, bump this so cached audits can be invalidated.
-SCORING_FUNCTION_ID = "retrieval.evidence_score:0.25R+0.35P+0.40Q"
+SCORING_FUNCTION_ID = "retrieval.evidence_score:Vx(0.35R+0.35P+0.30Q)"
 DIRECTION_METHOD = "lexical_rules"
 DIRECTION_METHOD_VERSION = "1.0"
 
@@ -412,12 +412,17 @@ def _dominant_direction(members: list[dict]) -> str:
 # Baseline scoring (FR-05) — reuses the authoritative function
 # --------------------------------------------------------------------------- #
 
-def score_passages(passages: list[dict], drug_name: str) -> dict:
+def score_passages(passages: list[dict], drug_name: str,
+                   verified_claims: int = 0, total_claims: int = 0) -> dict:
     """Score a passage set with the product's own scorer, normalising output.
 
     ``retrieval.evidence_score`` returns a payload WITHOUT ``breakdown`` when the
     passage list is empty, so we normalise here to keep the audit's shape stable.
     The numeric result is exactly what that function returns.
+
+    The verification counts are threaded through so the audit's baseline uses the
+    same function AND the same inputs as the product. Passing different inputs here
+    would make the audit describe a different score than the one displayed.
     """
     if not passages:
         return {
@@ -425,13 +430,26 @@ def score_passages(passages: list[dict], drug_name: str) -> dict:
             "tier": "Preliminary",
             "support": 0,
             "best_study_type": "none",
+            "verification": 0.0,
             "breakdown": {
-                "relevance": 0.0, "relevance_weight": 0.25,
+                "verification": 0.0, "verification_role": "multiplier",
+                "verified_claims": verified_claims, "total_claims": total_claims,
+                "evidence_strength": 0.0,
+                "relevance": 0.0, "relevance_weight": 0.35,
                 "support": 0.0, "support_weight": 0.35,
-                "study_quality": 0.0, "study_quality_weight": 0.40,
+                "study_quality": 0.0, "study_quality_weight": 0.30,
             },
         }
-    return retrieval.evidence_score(passages, drug_name)
+    return retrieval.evidence_score(passages, drug_name,
+                                    verified_claims=verified_claims,
+                                    total_claims=total_claims)
+
+
+def claims_verification_counts(claims: Optional[list[dict]]) -> tuple:
+    """(verified, total) for a candidate's claims."""
+    claims = claims or []
+    verified = sum(1 for c in claims if (c or {}).get("verification_status") == "verified")
+    return verified, len(claims)
 
 
 # --------------------------------------------------------------------------- #
@@ -468,6 +486,8 @@ def leave_one_study_out(
     peer_scores: dict[str, float],
     peer_kg_order: dict[str, int],
     candidate_key: str,
+    verified_claims: int = 0,
+    total_claims: int = 0,
     tie_break: str = TIE_BREAK,
 ) -> tuple[list[dict], list[str]]:
     """Remove each study unit in turn and rescore with the same function.
@@ -519,7 +539,9 @@ def leave_one_study_out(
             continue
 
         try:
-            cf = score_passages(remaining, drug_name)
+            cf = score_passages(remaining, drug_name,
+                                verified_claims=verified_claims,
+                                total_claims=total_claims)
             cf_score = float(cf["score"])
 
             # Re-rank over the SAME candidate set: only this candidate's score
@@ -715,11 +737,19 @@ def audit_candidate(
     status so a broken audit cannot take down the candidate result.
     """
     warnings: list[str] = []
+    # The candidate's knowledge-graph origin, reported separately from the evidence
+    # rank. Computed once so every exit path from this function reports the same
+    # value instead of falling back to the evidence rank.
+    candidate_graph_rank = (peer_kg_order.get(candidate_key) or 0) + 1
     try:
         ledger = build_evidence_ledger(drug_passages, drug_name, disease, claims)
         groups = group_study_units(ledger)
 
-        baseline = score_passages(drug_passages, drug_name)
+        # Same verification inputs the product used, so the audit's baseline is the
+        # displayed score rather than a differently-computed one.
+        _verified, _total = claims_verification_counts(claims)
+        baseline = score_passages(drug_passages, drug_name,
+                                  verified_claims=_verified, total_claims=_total)
         baseline_score = float(baseline["score"])
 
         if not groups:
@@ -732,6 +762,7 @@ def audit_candidate(
                 ledger=ledger,
                 groups=groups,
                 input_record_count=len(drug_passages),
+                graph_rank=candidate_graph_rank,
             )
 
         missing_pmid_groups = [g["study_group_id"] for g in groups if not g["has_valid_pmid"]]
@@ -765,11 +796,13 @@ def audit_candidate(
                 ledger=ledger,
                 groups=groups,
                 input_record_count=len(drug_passages),
+                graph_rank=candidate_graph_rank,
             )
 
         counterfactuals, cf_warnings = leave_one_study_out(
             drug_passages, drug_name, groups,
             baseline_score=baseline_score,
+            verified_claims=_verified, total_claims=_total,
             baseline_rank=baseline_rank,
             peer_scores=peer_scores,
             peer_kg_order=peer_kg_order,
@@ -832,12 +865,20 @@ def audit_candidate(
             ledger=[],
             groups=[],
             input_record_count=len(drug_passages),
+            graph_rank=candidate_graph_rank,
         )
 
 
 def _empty_audit(*, status, reason, warnings, baseline, baseline_rank, ledger, groups,
-                 input_record_count: Optional[int] = None) -> dict:
-    """Shared shape for audits that could not be completed."""
+                 input_record_count: Optional[int] = None,
+                 graph_rank: Optional[int] = None) -> dict:
+    """Shared shape for audits that could not be completed.
+
+    ``baseline_rank`` is the EVIDENCE rank. ``displayed_kg_rank`` is the
+    knowledge-graph origin and is a different quantity — it must be passed in
+    explicitly. Deriving it from ``baseline_rank`` conflated the two, so an
+    incomplete audit reported the evidence rank as if it were the graph rank.
+    """
     records_in = len(ledger) if input_record_count is None else input_record_count
     return {
         "version": AUDIT_VERSION,
@@ -850,7 +891,7 @@ def _empty_audit(*, status, reason, warnings, baseline, baseline_rank, ledger, g
         "baseline": {
             "evidence_score": round(float(baseline.get("score") or 0.0), 6),
             "evidence_rank": baseline_rank,
-            "displayed_kg_rank": baseline_rank,
+            "displayed_kg_rank": graph_rank,
             "tier": baseline.get("tier"),
             "components": baseline.get("breakdown"),
         },
@@ -903,12 +944,18 @@ def attach_audits(
 
     # --- baseline evidence scores for the whole candidate set -----------------
     per_candidate: dict[str, dict] = {}
-    for kg_order, result in enumerate(results):
+    for fallback_order, result in enumerate(results):
         drug_name = result.get("drug") or ""
         drug_passages = [
             p for p in top_passages
             if normalize_key(drug_name) and normalize_key(drug_name) in normalize_key(p.get("drug"))
         ]
+        # The pipeline now sorts `results` by evidence score, so the list index is
+        # the EVIDENCE position, not the knowledge-graph position. The graph origin
+        # must come from evidence_summary.graph_rank, or the tie-break and the
+        # reported displayed_kg_rank would both silently describe the wrong order.
+        graph_rank = (result.get("evidence_summary") or {}).get("graph_rank")
+        kg_order = (int(graph_rank) - 1) if isinstance(graph_rank, int) else fallback_order
         per_candidate[drug_name] = {
             "drug_name": drug_name,
             "passages": drug_passages,

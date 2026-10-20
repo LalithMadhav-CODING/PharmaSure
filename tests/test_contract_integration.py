@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import src.pipeline as pipeline
-from src import coverage, live_retrieval as lr
+from src import coverage, audit, live_retrieval as lr
 from src.app import app
 
 client = TestClient(app)
@@ -372,6 +372,7 @@ def test_current_contract_cache_entry_is_served():
                 "timings_ms": {},
                 "corpus_schema_version": coverage.CORPUS_SCHEMA_VERSION,
                 "response_contract_version": coverage.RESPONSE_CONTRACT_VERSION,
+                "scoring_function": audit.SCORING_FUNCTION_ID,
             }
         }
         result = pipeline.run_pipeline(KNOWN_DISEASE)
